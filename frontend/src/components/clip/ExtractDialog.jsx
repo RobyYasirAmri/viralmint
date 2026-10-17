@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import {
   Box, Typography, Stack, Chip, IconButton, Button,
   TextField, Tooltip, MenuItem, FormControlLabel, Checkbox, Switch,
-  Dialog, DialogTitle, DialogContent, DialogActions, Collapse,
+  Dialog, DialogTitle, DialogContent, DialogActions, Collapse, Divider,
 } from "@mui/material"
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import ContentCutIcon from "@mui/icons-material/ContentCut"
@@ -219,7 +219,9 @@ export default function ExtractDialog({ open, onClose, video, onExtract, setting
                 error={!!durationError}
                 slotProps={{ htmlInput: { min: 15, max: 180 } }}
                 onChange={e => setAi(p => ({ ...p, max_duration: parseInt(e.target.value) || null }))} />
-              <Box sx={{ flex: 1 }} />
+              {/* Beside the length, not pushed to the far edge: the three
+                  fields are one sentence ("10 to 60s, up to 8 clips"). */}
+              <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
               <TextField label="Clips (max)" type="number" size="small" sx={{ width: 110 }}
                 value={ai.max_clips || ""}
                 slotProps={{ htmlInput: { min: 1, max: 99 } }}
@@ -245,7 +247,9 @@ export default function ExtractDialog({ open, onClose, video, onExtract, setting
           {/* Advanced-options expander — collapses the 3 AI-targeting knobs so
               the dialog opens compact. All defaults are sensible; the user only
               has to touch these for niche cases (genre bias, custom query,
-              platform bias). */}
+              platform bias). The button and its Collapse are ONE item of the
+              outer Stack: as two, the closed Collapse still took a spacing slot
+              and left a ~40px hole under "Advanced options". */}
           <Box>
             <Button
               variant="text"
@@ -259,14 +263,13 @@ export default function ExtractDialog({ open, onClose, video, onExtract, setting
               }}
             >
               Advanced options
-              <Typography variant="caption" sx={{ ml: 0.75, color: "text.disabled", fontWeight: 500 }}>
+              <Typography variant="caption" sx={{ ml: 0.75, color: "text.secondary", fontWeight: 500 }}>
                 find specific moments · platform · genre
               </Typography>
             </Button>
-          </Box>
 
           <Collapse in={advancedOpen} timeout={200}>
-            <Stack spacing={2.5}>
+            <Stack spacing={2.5} sx={{ pt: 1.5 }}>
 
               {/* User query — natural-language clip filter (Opus's "ClipAnything"
                   equivalent). When non-empty, the AI ranks segments by match to
@@ -343,6 +346,7 @@ export default function ExtractDialog({ open, onClose, video, onExtract, setting
 
             </Stack>
           </Collapse>
+          </Box>
 
           {/* ── Shared settings group — applies to every clip ──────
               One outlined group, four compact rows. Rendered ONCE for
@@ -360,9 +364,11 @@ export default function ExtractDialog({ open, onClose, video, onExtract, setting
                 icon={<SubtitlesOutlinedIcon />}
                 label="Captions"
                 sublabel={!captionsOn ? "Off also hides the AI hook overlay" : null}
+                // The style name while on; nothing while off — the switch says
+                // it, as it does on every other row (only this one read "Off").
                 summary={captionsOn
                   ? (CAPTION_STYLE_OPTIONS.find(o => o.v === settings.caption_style)?.label || settings.caption_style)
-                  : "Off"}
+                  : null}
                 control={<RowSwitch checked={captionsOn} />}
                 onRowClick={() => set({ caption_style: captionsOn ? "none" : lastStyle.current })}
                 expanded={captionsOn}

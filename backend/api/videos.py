@@ -2,11 +2,14 @@
 # Copyright (c) 2025-2026 ViralMint Contributors
 """REST endpoints for generated videos."""
 import asyncio
+import io
 import json
 import logging
+import re
+import zipfile
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -321,16 +324,138 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    # Clean up files
-    for path_str in [video.video_path, video.audio_path, video.thumbnail_path]:
-        if path_str:
-            p = Path(path_str)
-            if p.exists():
-                p.unlink(missing_ok=True)
+    # Clean up files — the same set the bulk delete removes.
+    for path_str in _video_files(video):
+        p = Path(path_str)
+        if p.exists():
+            p.unlink(missing_ok=True)
 
     await db.delete(video)
     await db.commit()
     return {"ok": True}
+
+
+# Bulk ceilings. Delete is cheap per row; a ZIP is built in memory (mp4s are
+# already compressed, so ZIP_STORED — no CPU, but every byte is held), so it is
+# capped lower to keep that buffer bounded.
+BULK_DELETE_MAX = 200
+BULK_EXPORT_MAX = 50
+
+
+def _video_files(video: GeneratedVideo) -> list[str]:
+    """Every on-disk file a generated-video row owns — ONE list, used by the
+    single delete and the bulk delete alike, so neither leaks a file the other
+    removes (the cached 16:9 export is the one that used to be forgotten)."""
+    return [p for p in (video.video_path, video.audio_path, video.thumbnail_path,
+                        getattr(video, "video_path_landscape", None)) if p]
+
+
+def _sanitize_filename(name: str, max_len: int = 60) -> str:
+    """A safe archive member name from a video title: drops path separators
+    and filesystem-hostile characters, collapses whitespace, truncates.
+    Returns "clip" when nothing usable is left."""
+    if not name:
+        return "clip"
+    cleaned = re.sub(r"[^A-Za-z0-9 _\-.()]+", "", name).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned[:max_len] or "clip"
+
+
+def _zip_stream(files: list[tuple[str, Path]], bundle_name: str) -> StreamingResponse:
+    """An in-memory ZIP of (arcname, path) pairs as an attachment. Name
+    collisions get _2, _3, … in input order (two clips titled alike must not
+    overwrite each other inside the archive)."""
+    buf = io.BytesIO()
+    used: dict[str, int] = {}
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
+        for arcname, path in files:
+            if not path.exists():
+                continue
+            final = arcname
+            if arcname in used:
+                used[arcname] += 1
+                stem, sep, ext = arcname.rpartition(".")
+                final = f"{stem}_{used[arcname]}.{ext}" if sep else f"{arcname}_{used[arcname]}"
+            else:
+                used[arcname] = 1
+            zf.write(path, arcname=final)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{bundle_name}.zip"'},
+    )
+
+
+def _id_list(body: dict | None, key: str, cap: int) -> list[str]:
+    ids = (body or {}).get(key)
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+        raise HTTPException(status_code=400, detail=f"{key} must be a non-empty list of ids")
+    if len(ids) > cap:
+        raise HTTPException(status_code=400, detail=f"At most {cap} at once")
+    return list(dict.fromkeys(ids))
+
+
+@router.post("/videos/bulk-delete")
+async def bulk_delete_videos(body: dict = None, db: AsyncSession = Depends(get_db)):
+    """Delete several generated videos (the Clipper's "Delete N") and every
+    file each one owns. Body: {"clip_ids": [...]}. Returns {"ok", "deleted"}.
+    Ids that match no row are skipped, not an error — the rest still go."""
+    ids = _id_list(body, "clip_ids", BULK_DELETE_MAX)
+    videos = (await db.execute(
+        select(GeneratedVideo).where(GeneratedVideo.id.in_(ids))
+    )).scalars().all()
+    if not videos:
+        raise HTTPException(status_code=404, detail="No matching clips found")
+    for video in videos:
+        for path_str in _video_files(video):
+            try:
+                Path(path_str).unlink(missing_ok=True)
+            except OSError as e:  # a locked file must not strand the rest
+                logger.warning("bulk-delete: could not remove %s: %s", path_str, e)
+        await db.delete(video)
+    await db.commit()
+    return {"ok": True, "deleted": len(videos)}
+
+
+@router.post("/videos/bulk-export")
+async def bulk_export_videos(body: dict = None, db: AsyncSession = Depends(get_db)):
+    """Several generated videos as one ZIP (the Clipper's "Download ZIP").
+
+    Body: {"video_ids": [...], "include_thumbnails": false}. Members are
+    `{title}.mp4` (+ `{title}.jpg`). Rows whose file is missing or outside the
+    storage dir are skipped; 404 when nothing at all is left to zip.
+    """
+    ids = _id_list(body, "video_ids", BULK_EXPORT_MAX)
+    include_thumbs = bool((body or {}).get("include_thumbnails"))
+    videos = (await db.execute(
+        select(GeneratedVideo).where(GeneratedVideo.id.in_(ids))
+    )).scalars().all()
+    if not videos:
+        raise HTTPException(status_code=404, detail="No matching videos found")
+
+    files: list[tuple[str, Path]] = []
+    for v in videos:
+        if not v.video_path:
+            continue
+        try:
+            path = _safe_resolve_path(v.video_path)
+        except HTTPException:
+            continue
+        if not path.exists():
+            continue
+        base = _sanitize_filename(v.title or f"clip_{v.id[:8]}")
+        files.append((f"{base}.mp4", path))
+        if include_thumbs and v.thumbnail_path:
+            try:
+                thumb = _safe_resolve_path(v.thumbnail_path)
+            except HTTPException:
+                continue
+            if thumb.exists():
+                files.append((f"{base}.jpg", thumb))
+    if not files:
+        raise HTTPException(status_code=404, detail="No video files found on disk")
+    n_videos = sum(1 for name, _ in files if name.endswith(".mp4"))
+    return await asyncio.to_thread(_zip_stream, files, f"viralmint-clips-{n_videos}")
 
 
 def _safe_resolve_path(path_str: str) -> Path:
@@ -429,7 +554,13 @@ async def stream_video(video_id: str, request: Request, db: AsyncSession = Depen
 
     path = _safe_resolve_path(video.video_path)
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
+        # 410, typed: the row exists, its file does not. The Clipper's
+        # inspector keys on the header to say "this clip's file is gone"
+        # instead of showing a black player.
+        raise HTTPException(status_code=410, detail="Video file not found on disk",
+                            headers={"X-ViralMint-Error": "clip_file_missing",
+                                     # a cached 410 outlived a restored file
+                                     "Cache-Control": "no-store"})
 
     return serve_media_with_range(path, request, filename=f"{video.title or 'video'}.mp4")
 

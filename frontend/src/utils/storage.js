@@ -15,3 +15,49 @@ export function storageKey(scope, name) {
   if (!scope || !name) throw new Error("storageKey(scope, name): both required")
   return `vm.${scope}.${name}`
 }
+
+/**
+ * Read + JSON.parse a key, returning `fallback` on absent/corrupt/blocked.
+ *
+ * localStorage throws in Safari private mode and when a page is sandboxed, and
+ * a half-written value throws in JSON.parse — several call sites already
+ * wrapped one or the other in try/catch, and the ones that didn't would take
+ * the whole page down with them.
+ */
+export function readJson(key, fallback = null) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw == null ? fallback : JSON.parse(raw)
+  } catch {
+    return fallback
+  }
+}
+
+/** JSON.stringify + write. Silently no-ops when storage is unavailable. */
+export function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Read a raw string value. */
+export function readRaw(key, fallback = null) {
+  try {
+    return localStorage.getItem(key) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** Write a raw string value. */
+export function writeRaw(key, value) {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}

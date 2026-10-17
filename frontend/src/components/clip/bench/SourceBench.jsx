@@ -3,25 +3,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Box, Button, Checkbox, Chip, CircularProgress, Dialog, DialogActions,
-  DialogContent, DialogTitle, Divider, FormControlLabel, IconButton, MenuItem,
+  DialogContent, DialogTitle, Divider, FormControlLabel, IconButton, Link, MenuItem,
   Popover, Stack, TextField, Tooltip, Typography,
 } from "@mui/material"
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import ContentCutIcon from "@mui/icons-material/ContentCut"
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"
 import PauseIcon from "@mui/icons-material/Pause"
-import KeyboardIcon from "@mui/icons-material/KeyboardOutlined"
 import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOverOutlined"
 import ContentPasteIcon from "@mui/icons-material/ContentPasteGoOutlined"
 import MagnetIcon from "@mui/icons-material/PushPinOutlined"
+import WarningAmberIcon from "@mui/icons-material/WarningAmber"
+import ShortcutsPopover from "../../ShortcutsPopover"
 import Timeline from "./Timeline"
 import InOutFrames from "./InOutFrames"
 import RangeRail from "./RangeRail"
 import { MAX_RANGES, MIN_LEN_SEC } from "./useBenchRanges"
 import { parseRangeText } from "./parseRanges"
 import { formatTime } from "../clipFormat"
+import { formatDuration } from "../../../utils/format"
+import ToggleChip from "./ToggleChip"
 import { CAPTION_STYLES } from "../../tools/captionOptions"
 import http from "../../../api/http"
+import { createPlayhead } from "./playheadStore"
 import { storageKey } from "../../../utils/storage"
 import useAppStore from "../../../store/appStore"
 
@@ -91,6 +95,14 @@ const SHORTCUTS = [
   ["Alt-drag", "Ignore speech snapping"],
 ]
 
+// A disabled contained button must LOOK disabled. The theme paints
+// containedPrimary with a gradient `background`, which outranks MUI's disabled
+// background-color — so "Play clip" with nothing selected stayed light orange
+// with a faint label, reading as an enabled button (audit 2026-09-25).
+export const DISABLED_CONTAINED = {
+  "&.Mui-disabled": { background: "none", bgcolor: "action.disabledBackground", color: "action.disabled", boxShadow: "none" },
+}
+
 export default function SourceBench({
   source,            // DownloadedVideo row
   existingClips,     // clips already cut from this source (for the ghost lane)
@@ -99,6 +111,8 @@ export default function SourceBench({
                      // that spends this list lives in the page hero
   settings,          // shared per-clip settings (useClipSettings, owned by
   onSettings,        // ClipStudio) — the dialog reads the SAME object
+  onSourceMissing,   // (id) the source's file turned out to be gone — the
+                     // page re-reads its sources and files it under "missing"
 }) {
   const showSnackbar = useAppStore((s) => s.showSnackbar)
   const videoRef = useRef(null)
@@ -107,9 +121,45 @@ export default function SourceBench({
   const sourceId = source?.id || null
   const duration = source?.duration_seconds || 0
   const hasTranscript = !!source?.has_transcript_segments
-  const src = sourceId ? `/api/downloaded/${sourceId}/stream` : null
+  // require=video: never fall back to the row's audio file — sound over a
+  // black frame, with no error raised, is the dead player this bench must not
+  // show. A missing video answers a typed 410 instead (onVideoError below).
+  const src = sourceId ? `/api/downloaded/${sourceId}/stream?require=video` : null
 
-  const [playhead, setPlayhead] = useState(0)
+  // The playhead is a store, not state: the <video> reports it ~4×/s and it
+  // used to re-render the whole bench (strip, lanes, rail, footer) each time.
+  // Only the timeline's playhead line subscribes (playheadStore.js); handlers
+  // read clock.get() (audit 2026-09-25).
+  const [clock] = useState(() => createPlayhead(0))
+  // Why the player cannot play, when it cannot. A <video> error carries no
+  // HTTP status, so on error the stream is asked once (one byte) and the
+  // answer decides the sentence — a black player with nothing said is the
+  // failure this replaces ("I selected a clip but it cannot be played").
+  const [playError, setPlayError] = useState(null)
+  const onVideoError = useCallback(async () => {
+    if (!src) return
+    let status = 0
+    let mark = ""
+    try {
+      const r = await fetch(src, { headers: { Range: "bytes=0-0" } })
+      status = r.status
+      mark = r.headers.get("X-ViralMint-Error") || ""
+    } catch { /* server unreachable — the generic sentence below */ }
+    if (status === 410 || mark === "source_file_missing") {
+      setPlayError("This video's file is no longer on disk, so it can't be played or cut. Remove it from the list, or download it again.")
+      onSourceMissing?.(sourceId)
+    } else if (mark === "source_outside_storage") {
+      setPlayError("This video's file is outside ViralMint's data folder, so it can't be served. Import it again to clip it.")
+    } else if (status === 200 || status === 206) {
+      setPlayError("The browser can't play this file — its format or codec isn't supported. Cutting may still work.")
+    } else {
+      setPlayError(`This video couldn't be loaded${status ? ` (HTTP ${status})` : ""}.`)
+    }
+  }, [src, sourceId, onSourceMissing])
+  const setPlayhead = clock.set
+  // A range edge or body is being dragged on the timeline: the IN/OUT panes
+  // show the filmstrip proxy until it settles, then fetch the exact frame once.
+  const [scrubbing, setScrubbing] = useState(false)
   // The filmstrip sprite, handed up by Timeline. The IN/OUT panes reuse it
   // as their instant proxy, so it has to be the SAME url the browser
   // already has cached — not a second one built to different dimensions.
@@ -132,7 +182,6 @@ export default function SourceBench({
   const [aspect, setAspect] = useState(16 / 9)
   const [segments, setSegments] = useState([])
   const [snapEnabled, setSnapEnabled] = useState(true)
-  const [helpAnchor, setHelpAnchor] = useState(null)
   const [aiAnchor, setAiAnchor] = useState(null)
   const [txAnchor, setTxAnchor] = useState(null)
   const [pasteOpen, setPasteOpen] = useState(false)
@@ -149,8 +198,8 @@ export default function SourceBench({
   // something else happens to touch the store.
   // Restored from sessionStorage per source: SourceBench unmounts whenever
   // the user peeks at a finished clip (centerMode flips) — without this, a
-  // running Ask AI was silently orphaned and its proposals never adopted. On
-  // remount the collector below re-attaches to the job row.
+  // running Ask AI was silently orphaned and its proposals
+  // never adopted. On remount the collector below re-attaches to the job row.
   const suggestKey = storageKey("clipper", `suggest:${source?.id}`)
   const [suggestJobId, setSuggestJobId] = useState(() => {
     try { return sessionStorage.getItem(suggestKey) || null } catch { return null }
@@ -177,10 +226,9 @@ export default function SourceBench({
     setStrip(null)
     setFineStrip(null)
     setPlaying(false)
+    setScrubbing(false)
     if (!sourceId) return
     let cancelled = false
-    // limit=5000 (the endpoint's ceiling): the default 1500 stopped snapping
-    // past segment 1500 on long podcasts.
     http.get(`/api/downloaded/${sourceId}/segments?limit=5000`)
       .then(({ data }) => { if (!cancelled) setSegments(data?.segments || []) })
       // A source with no transcript is ordinary — the timeline just loses
@@ -228,9 +276,9 @@ export default function SourceBench({
     const clamped = Math.max(0, Math.min(t, duration || t))
     setPlayhead(clamped)
     if (v && Number.isFinite(clamped)) v.currentTime = clamped
-  }, [duration])
+  }, [duration, setPlayhead])
 
-  const nudgePlayhead = useCallback((d) => seek(playhead + d), [seek, playhead])
+  const nudgePlayhead = useCallback((d) => seek(clock.get() + d), [seek, clock])
 
   /** Play — scoped to the selected range when one is active.
    *  Entering from outside the range (or from its very end) restarts at its
@@ -258,17 +306,17 @@ export default function SourceBench({
       v.pause()
       v.currentTime = a.start   // parked ready to replay the same clip
     }
-  }, [scoped])
+  }, [scoped, setPlayhead])
 
   const addAtPlayhead = useCallback(() => {
     if (R.atCap) {
       showSnackbar(`The bench holds ${MAX_RANGES} ranges — cut or remove some first`, "warning")
       return
     }
-    if (!R.addAt(playhead)) {
+    if (!R.addAt(clock.get())) {
       showSnackbar("No free space here — move the playhead, or drag on the strip", "warning")
     }
-  }, [R, playhead, showSnackbar])
+  }, [R, clock, showSnackbar])
 
   // ── AI picks ───────────────────────────────────────────────
   // The WS status is a HINT that the search has landed; the job row is the
@@ -405,7 +453,8 @@ export default function SourceBench({
       // The native player owns its own keys. `<video controls>` is focusable,
       // so after clicking it Space reached BOTH the browser's play/pause and
       // togglePlay() below — two toggles, one press, and the video visibly
-      // refused to start. Media controls win wherever they have focus.
+      // refused to start. Media controls win wherever they have focus (the
+      // same rule the Studio's handler uses).
       if (tag === "VIDEO" || tag === "AUDIO") return
       const step = e.shiftKey ? 1 : 1 / 30
       const a = R.active
@@ -419,10 +468,10 @@ export default function SourceBench({
         case "j": case "J": e.preventDefault(); nudgePlayhead(-10); break
         case "l": case "L": e.preventDefault(); nudgePlayhead(10); break
         case "i": case "I":
-          if (a) { e.preventDefault(); R.update(a.id, { start: playhead }); R.settle() }
+          if (a) { e.preventDefault(); R.update(a.id, { start: clock.get() }); R.settle() }
           break
         case "o": case "O":
-          if (a) { e.preventDefault(); R.update(a.id, { end: playhead }); R.settle() }
+          if (a) { e.preventDefault(); R.update(a.id, { end: clock.get() }); R.settle() }
           break
         case "n": case "N": e.preventDefault(); addAtPlayhead(); break
         case "Backspace": case "Delete":
@@ -433,12 +482,12 @@ export default function SourceBench({
     }
     el.addEventListener("keydown", onKey)
     return () => el.removeEventListener("keydown", onKey)
-  }, [R, playhead, nudgePlayhead, addAtPlayhead, togglePlay])
+  }, [R, clock, nudgePlayhead, addAtPlayhead, togglePlay])
 
   // Declared up here, not after the `!source` guard: `askAi` below reads it,
   // and a const referenced above its declaration is a TDZ ReferenceError at
-  // render — which `vite build` compiles without a word, the same way it
-  // compiles a JSX identifier that was never imported.
+  // render — which `vite build` compiles without a word (the CloseIcon
+  // lesson, 2026-08-06; CLAUDE.md rule #28).
   const atCap = R.atCap
 
   /* ── Ask AI ─────────────────────────────────────────────────
@@ -524,13 +573,16 @@ export default function SourceBench({
               {GENRES.map((o) => <MenuItem key={o.v} value={o.v}>{o.label}</MenuItem>)}
             </TextField>
           </Stack>
-          <Typography variant="caption" sx={{ color: "text.disabled" }}>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
             Up to {MAX_RANGES} proposals — every one is cut through the same path
             as a hand-drawn range.{" "}
-            <Box component="span" onClick={() => { setAiAnchor(null); onOpenDialog() }}
-              sx={{ color: "primary.main", cursor: "pointer", textDecoration: "underline" }}>
+            {/* A real button: the <span> it was took clicks but no focus,
+                so keyboard users could never reach Auto-cut from here. */}
+            <Link component="button" type="button" variant="caption"
+              onClick={() => { setAiAnchor(null); onOpenDialog() }}
+              sx={{ fontWeight: 600, verticalAlign: "baseline" }}>
               Need more? Auto-cut instead →
-            </Box>
+            </Link>
           </Typography>
           <Button
             variant="contained" color="secondary" fullWidth
@@ -592,33 +644,8 @@ export default function SourceBench({
             </IconButton>
           </span>
         </Tooltip>
-        <Tooltip title="Keyboard shortcuts">
-          <IconButton size="small" aria-label="Keyboard shortcuts"
-            onClick={(e) => setHelpAnchor(e.currentTarget)} sx={{ color: "text.secondary" }}>
-            <KeyboardIcon sx={{ fontSize: 17 }} />
-          </IconButton>
-        </Tooltip>
+        <ShortcutsPopover shortcuts={SHORTCUTS} />
       </Stack>
-
-      <Popover
-        open={Boolean(helpAnchor)} anchorEl={helpAnchor} onClose={() => setHelpAnchor(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-      >
-        <Stack spacing={0.5} sx={{ p: 1.5, minWidth: 260 }}>
-          {SHORTCUTS.map(([k, d]) => (
-            <Stack key={k} direction="row" spacing={1.5} alignItems="center">
-              <Box sx={{
-                minWidth: 62, px: 0.75, py: 0.15, borderRadius: 1,
-                border: "1px solid", borderColor: "divider",
-                fontFamily: "ui-monospace, monospace", fontSize: "0.68rem",
-                textAlign: "center", flexShrink: 0,
-              }}>{k}</Box>
-              <Typography variant="caption" sx={{ color: "text.secondary" }}>{d}</Typography>
-            </Stack>
-          ))}
-        </Stack>
-      </Popover>
 
       {/* ── IN | player | OUT | pending cuts ───────────────
           The range list used to be a full-width band below the timeline: one
@@ -634,13 +661,15 @@ export default function SourceBench({
         <InOutFrames
           sourceId={sourceId}
           range={R.active}
-          playhead={playhead}
+          playhead={clock}
+          dragging={scrubbing}
           duration={duration}
           aspect={aspect}
           strip={fineStrip || strip}
           onChange={(patch) => { if (R.active) { R.update(R.active.id, patch); R.settle() } }}
         >
           <Box sx={(t) => ({
+            // InOutFrames sizes its slot to the source's aspect; fill it.
             position: "relative",
             height: "100%", minHeight: 0,
             aspectRatio: String(aspect),
@@ -667,8 +696,22 @@ export default function SourceBench({
               onSeeked={(e) => setPlayhead(e.currentTarget.currentTime)}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
+              onError={onVideoError}
               sx={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
             />
+            {playError && (
+              <Stack role="alert" data-testid="bench-play-error" spacing={1}
+                alignItems="center" justifyContent="center"
+                sx={{
+                  position: "absolute", inset: 0, p: 2, textAlign: "center",
+                  bgcolor: "rgba(0,0,0,0.78)", color: "#fff",
+                }}>
+                <WarningAmberIcon sx={{ color: "warning.main" }} />
+                <Typography variant="body2" sx={{ maxWidth: 360, lineHeight: 1.5 }}>
+                  {playError}
+                </Typography>
+              </Stack>
+            )}
           </Box>
         </InOutFrames>
         </Box>
@@ -706,24 +749,20 @@ export default function SourceBench({
           disabled={!R.active}
           startIcon={playing ? <PauseIcon sx={{ fontSize: 17 }} /> : <PlayArrowIcon sx={{ fontSize: 17 }} />}
           onClick={togglePlay}
-          sx={{ textTransform: "none", fontWeight: 700, minWidth: 128 }}
+          sx={{ textTransform: "none", fontWeight: 700, minWidth: 128, ...DISABLED_CONTAINED }}
         >
           {playing ? "Pause" : R.active ? `Play clip ${R.ranges.indexOf(R.active) + 1}` : "Play clip"}
         </Button>
-        <Tooltip title={scoped
-          ? "Playback is limited to the selected clip — it starts at IN and stops at OUT"
-          : "Playback runs through the whole source, ignoring the selection"}>
-          <Chip
-            size="small"
-            label={scoped ? "Selection only" : "Whole video"}
-            color={scoped ? "primary" : "default"}
-            variant={scoped ? "filled" : "outlined"}
-            onClick={() => setScoped((v) => !v)}
-          />
+        {/* A secondary toggle beside the primary button, not a second
+            filled-orange "button". Stable label; aria-pressed says the state. */}
+        <Tooltip describeChild title={scoped
+          ? "On: playback starts at IN and stops at OUT. Turn off to play through the whole video"
+          : "Off: playback runs through the whole video. Turn on to play only the selected clip"}>
+          <ToggleChip label="Selection only" pressed={scoped} onToggle={() => setScoped((v) => !v)} />
         </Tooltip>
         {R.active && (
           <Typography variant="caption" sx={{ color: "text.secondary", fontFamily: "ui-monospace, monospace" }}>
-            {formatTime(R.active.start)}–{formatTime(R.active.end)} · {Math.round(R.active.end - R.active.start)}s
+            {formatTime(R.active.start)}–{formatTime(R.active.end)} · {formatDuration(R.active.end - R.active.start)}
           </Typography>
         )}
       </Stack>
@@ -738,7 +777,8 @@ export default function SourceBench({
           ranges={R.ranges}
           activeId={R.activeId}
           ghosts={ghosts}
-          playhead={playhead}
+          playhead={clock}
+          onDragChange={setScrubbing}
           snapEnabled={snapEnabled}
           onSeek={seek}
           onRangeSelect={(id) => {
@@ -763,7 +803,7 @@ export default function SourceBench({
           onStrip={setStrip}
         />
         <Stack direction="row" spacing={1.5} sx={{ mt: 0.75, px: 0.25 }} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Typography variant="caption" sx={{ color: "text.disabled" }}>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
             Drag on the strip to make a clip · drag its edges to trim
           </Typography>
           <Box sx={{ flex: 1 }} />
@@ -793,29 +833,27 @@ export default function SourceBench({
             {EMOJI_OPTIONS.map((o) => <MenuItem key={o.v} value={o.v}>{o.label}</MenuItem>)}
           </TextField>
         )}
-        <Tooltip title="Convert a landscape source to 9:16 with a blurred fill">
-          <Chip
-            label="Vertical 9:16" size="small"
-            color={settings.force_vertical ? "primary" : "default"}
-            variant={settings.force_vertical ? "filled" : "outlined"}
-            onClick={() => onSettings({ force_vertical: !settings.force_vertical })}
-          />
+        {/* describeChild: the tooltip DESCRIBES the chip; its name stays the
+            label (without it MUI made the tooltip text the accessible name). */}
+        <Tooltip describeChild title="Convert a landscape source to 9:16 with a blurred fill">
+          <ToggleChip label="Vertical 9:16" pressed={!!settings.force_vertical}
+            onToggle={() => onSettings({ force_vertical: !settings.force_vertical })} />
         </Tooltip>
-        <Tooltip title="Trim silent gaps and filler words INSIDE each cut — your in/out points don't move">
-          <Chip
-            label="Trim silence" size="small"
-            color={settings.remove_silence ? "primary" : "default"}
-            variant={settings.remove_silence ? "filled" : "outlined"}
-            onClick={() => onSettings({ remove_silence: !settings.remove_silence })}
-          />
+        <Tooltip describeChild title="Trim silent gaps and filler words INSIDE each cut — your in/out points don't move">
+          <ToggleChip label="Trim silence" pressed={!!settings.remove_silence}
+            onToggle={() => onSettings({ remove_silence: !settings.remove_silence })} />
         </Tooltip>
         {/* Transcription used to be reachable only through the dialog,
             which meant one setting forced you onto the other surface. */}
-        <Tooltip title={source.has_transcript_segments
+        <Tooltip describeChild title={source.has_transcript_segments
           ? "This video already has a transcript — Whisper is skipped unless you ask for a fresh one"
           : "No transcript yet: Whisper runs before captions, silence trimming and Ask AI"}>
           <Chip
             size="small" variant="outlined"
+            aria-haspopup="dialog" aria-expanded={txAnchor ? "true" : undefined}
+            aria-label={`Transcription settings — ${source.has_transcript_segments && !settings.force_retranscribe
+              ? "transcript cached"
+              : `Whisper ${settings.whisper_quality}`}`}
             icon={<RecordVoiceOverIcon sx={{ fontSize: 14 }} />}
             label={source.has_transcript_segments && !settings.force_retranscribe
               ? "Transcript cached"
@@ -857,10 +895,11 @@ export default function SourceBench({
             This video is shorter than one second
           </Typography>
         )}
-        {/* Cut lives in the page hero (top-right, before Auto-cut) — the
-            app's convention for a primary action, and it puts the two ways of
-            cutting side by side instead of at opposite corners. This row is
-            purely the per-clip settings that shape whatever it cuts. */}
+        {/* Cut moved to the page hero (top-right, before Auto-cut) — the
+            app's convention for a primary action, and it puts the two ways
+            of spending side by side instead of at opposite corners. This
+            row is now purely the per-clip settings that shape whatever it
+            cuts. */}
       </Stack>
       <PasteRangesDialog
         open={pasteOpen}
@@ -940,7 +979,7 @@ function LegendDot({ color, label }) {
   return (
     <Stack direction="row" spacing={0.5} alignItems="center">
       <Box sx={{ width: 8, height: 8, borderRadius: "2px", bgcolor: color, opacity: 0.6 }} />
-      <Typography variant="caption" sx={{ color: "text.disabled" }}>{label}</Typography>
+      <Typography variant="caption" sx={{ color: "text.secondary" }}>{label}</Typography>
     </Stack>
   )
 }

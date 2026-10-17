@@ -8,6 +8,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined"
 import ContentPasteIcon from "@mui/icons-material/ContentPasteGoOutlined"
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweepOutlined"
 import { formatTime } from "../clipFormat"
+import { formatDuration } from "../../../utils/format"
 import { parseTimestamp } from "./parseRanges"
 import { MAX_RANGES, MIN_LEN_SEC } from "./useBenchRanges"
 
@@ -164,7 +165,7 @@ const Row = memo(function Row({
           fontSize: "0.6rem", fontWeight: 700, color: "text.secondary",
           flexShrink: 0, fontVariantNumeric: "tabular-nums",
         }}>
-          {len < 60 ? `${Math.round(len)}s` : `${Math.floor(len / 60)}m${String(Math.round(len % 60)).padStart(2, "0")}`}
+          {formatDuration(len)}
         </Typography>
         <IconButton
           size="small" aria-label={`Remove range ${index + 1}`}
@@ -210,7 +211,9 @@ export default function RangeRail({
     <Box sx={{
       // 300, up from 252: the AI label line was the first thing to ellipsise
       // and it is the only thing saying WHY a proposed block is there.
-      width: 300, flexShrink: 0,
+      // …and it gives way (to 232) on a narrow bench, where the player
+      // between IN and OUT had shrunk to nothing (audit 2026-09-25, 1024px).
+      width: "clamp(232px, 32%, 300px)", flexShrink: 0,
       display: "flex", flexDirection: "column", minHeight: 0,
       pt: 2.2,   // clears the IN/OUT panes' label line so the tops align
     }}>
@@ -223,7 +226,7 @@ export default function RangeRail({
         </Typography>
         <Typography sx={{
           fontSize: "0.6rem", fontWeight: 700,
-          color: atCap ? "warning.main" : "text.disabled",
+          color: atCap ? "warning.main" : "text.secondary",
         }}>
           {ranges.length}/{MAX_RANGES}
         </Typography>
@@ -267,7 +270,7 @@ export default function RangeRail({
       }}>
         {ranges.length === 0 ? (
           <Stack spacing={0.75} sx={{ p: 1 }}>
-            <Typography sx={{ fontSize: "0.66rem", color: "text.disabled", lineHeight: 1.5 }}>
+            <Typography sx={{ fontSize: "0.66rem", color: "text.secondary", lineHeight: 1.5 }}>
               No ranges yet. Drag across the filmstrip, press <strong>N</strong>,
               paste timestamps, or <strong>Ask AI</strong> to propose some.
             </Typography>

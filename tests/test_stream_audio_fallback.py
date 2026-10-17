@@ -71,7 +71,10 @@ async def test_the_video_still_wins_when_both_exist(client):
 
 
 @pytest.mark.asyncio
-async def test_neither_file_is_still_a_404(client):
+async def test_neither_file_is_a_typed_410(client):
+    """The row exists, neither file does: 410 + the source_file_missing marker
+    (an unknown id stays a 404 — see test_clipper_missing_files.py)."""
     vid = await _row(str(settings.VIDEOS_DIR / "no.mp4"), str(settings.AUDIO_DIR / "no.mp3"))
     r = await client.get(f"/api/downloaded/{vid}/stream")
-    assert r.status_code == 404
+    assert r.status_code == 410
+    assert r.headers.get("x-viralmint-error") == "source_file_missing"
