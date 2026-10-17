@@ -78,3 +78,43 @@ export function formatDuration(seconds) {
   if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
   return `${s}s`
 }
+
+/**
+ * Format a timestamp as "just now" / "Nm ago" / "Nh ago" / "Nd ago", falling
+ * back to a localized short date once `fullDateAfterDays` has elapsed.
+ *
+ * @param {string|number|Date} iso     ISO string, Date, or UNIX seconds.
+ * @param {object} [opts]
+ * @param {number}  [opts.fullDateAfterDays=30]    Switch to a calendar date past this many days.
+ * @param {boolean} [opts.includeYear=false]       Include the year in the calendar fallback.
+ * @param {boolean} [opts.useYesterday=false]      Render exactly 1 day ago as "Yesterday".
+ * @param {boolean} [opts.verbose=false]           "5 min ago" / "2 hours ago" instead of "5m" / "2h".
+ * @param {boolean} [opts.secondsGranularity=false] Tick in seconds under a minute ("12s ago").
+ * @returns {string}
+ */
+export function formatRelativeTime(iso, opts = {}) {
+  const d = toDate(iso)
+  if (!d) return ""
+  const fullDateAfterDays = opts.fullDateAfterDays ?? 30
+  const includeYear = opts.includeYear ?? false
+  const useYesterday = opts.useYesterday ?? false
+  const verbose = opts.verbose ?? false
+  const secondsGranularity = opts.secondsGranularity ?? false
+
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"} ago`
+
+  const secs = Math.floor((Date.now() - d.getTime()) / 1000)
+  if (secs < (secondsGranularity ? 5 : 60)) return verbose ? "Just now" : "just now"
+  if (secondsGranularity && secs < 60) return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return verbose ? `${mins} min ago` : `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return verbose ? plural(hrs, "hour") : `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (useYesterday && days === 1) return "Yesterday"
+  if (days < fullDateAfterDays) return verbose ? plural(days, "day") : `${days}d ago`
+
+  const dateOpts = { month: "short", day: "numeric" }
+  if (includeYear) dateOpts.year = "numeric"
+  return d.toLocaleDateString(undefined, dateOpts)
+}

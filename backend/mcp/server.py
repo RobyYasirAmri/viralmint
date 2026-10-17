@@ -201,6 +201,55 @@ def _install_full_description_decorator(mcp) -> None:
     mcp.tool = tool
 
 
+class ActivityLogMiddleware(BaseHTTPMiddleware):
+    """Record every authenticated MCP request in the activity buffer.
+
+    Runs inside the Bearer check (see the add order in build_mcp_asgi_app), so
+    a 401 never reaches the Activity tab. The JSON-RPC body is read through
+    `request.body()`, which Starlette caches, so the fastmcp handler still
+    sees it. Only the first 64 KB is parsed — far above any real MCP payload,
+    small enough that a huge POST can't balloon memory here.
+    """
+
+    _MAX_BODY_BYTES = 64 * 1024
+
+    async def dispatch(self, request: Request, call_next):
+        import json
+        import time
+        from backend.mcp import activity
+
+        start = time.monotonic()
+        method_name: str | None = None
+        tool_name: str | None = None
+        try:
+            rpc = json.loads((await request.body())[: self._MAX_BODY_BYTES] or b"null")
+            if isinstance(rpc, dict):
+                method_name = rpc.get("method")
+                params = rpc.get("params")
+                if method_name in ("tools/call", "prompts/get") and isinstance(params, dict):
+                    tool_name = params.get("name")
+        except Exception:
+            pass  # not JSON-RPC (a GET stream, a truncated body) — log the HTTP verb
+
+        status_code = 500
+        error: str | None = None
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        except Exception as e:
+            error = f"{type(e).__name__}: {str(e)[:160]}"
+            raise
+        finally:
+            await activity.record_and_broadcast(
+                method=method_name or request.method,
+                tool=tool_name,
+                status_code=status_code,
+                latency_ms=(time.monotonic() - start) * 1000,
+                error=error,
+            )
+
+
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Reject MCP requests without (or with the wrong) Bearer token.
 
@@ -269,6 +318,9 @@ def build_mcp_asgi_app():
         mcp = _build_mcp_app()
         # path="/" so the mount at /mcp serves /mcp, not /mcp/mcp.
         mcp_asgi = mcp.http_app(path="/")
+        # Starlette runs middleware in REVERSE add order: activity is added
+        # first so auth runs first and a rejected request is never logged.
+        mcp_asgi.add_middleware(ActivityLogMiddleware)
         # The token provider is the FUNCTION, re-read per request, so a
         # rotation on the /mcp page takes effect without a restart.
         mcp_asgi.add_middleware(

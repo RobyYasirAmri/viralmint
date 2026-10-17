@@ -255,15 +255,146 @@ def test_endpoint_url_never_names_the_wildcard_bind(monkeypatch):
 
 def test_tools_endpoint_lists_the_mounted_server(app_client, registered_tools):
     data = app_client.get("/api/settings/mcp/tools").json()
-    assert data["available"] is True
+    assert data["available"] is True and data["ok"] is True
     assert {t["name"] for t in data["tools"]} == {t.name for t in registered_tools}
     assert all(t["summary"] for t in data["tools"])
+
+
+def test_tools_are_grouped_by_the_module_that_registers_them(app_client, registered_tools):
+    """Groups are derived, so a new tool can't land in "other" for want of a
+    hand-kept map — and none does today."""
+    from backend.api.mcp_settings import MCP_GROUP_ORDER
+    data = app_client.get("/api/settings/mcp/tools").json()
+    grouped = [t["name"] for g in data["groups"] for t in g["tools"]]
+    assert sorted(grouped) == sorted(t.name for t in registered_tools)
+    assert data["total"] == len(registered_tools)
+    names = [g["name"] for g in data["groups"]]
+    assert "other" not in names
+    assert names == [g for g in MCP_GROUP_ORDER if g in names], "groups render in display order"
+    by_name = {t["name"]: g["name"] for g in data["groups"] for t in g["tools"]}
+    assert by_name["wait_for_job"] == "orchestration"
+    assert all("parameters" in t for g in data["groups"] for t in g["tools"])
+
+
+def test_prompts_and_resources_endpoints(app_client):
+    prompts = app_client.get("/api/settings/mcp/prompts").json()
+    assert prompts["ok"] and prompts["total"] == len(prompts["prompts"]) > 0
+    assert all(p["name"].startswith("viralmint:") for p in prompts["prompts"])
+    resources = app_client.get("/api/settings/mcp/resources").json()
+    assert resources["ok"]
+    templates = [r for r in resources["resources"] if r["is_template"]]
+    assert any("{" in r["uri_template"] for r in templates), "templated resources are listed too"
+
+
+def test_activity_logs_authenticated_requests_only(app_client):
+    from backend.mcp import activity
+    activity.clear()
+    app_client.post("/mcp/", json=_INIT, headers=_MCP_HEADERS)          # 401, not logged
+    token = mcp_token.get_or_create_mcp_token()
+    r = app_client.post("/mcp/", json=_INIT,
+                        headers={**_MCP_HEADERS, "Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    events = app_client.get("/api/settings/mcp/activity").json()["events"]
+    assert [(e["method"], e["status_code"]) for e in events] == [("initialize", 200)]
+    assert app_client.post("/api/settings/mcp/activity/clear").json()["cleared"]
+    assert app_client.get("/api/settings/mcp/activity").json()["events"] == []
+
+
+def test_activity_names_the_tool_of_a_call():
+    import asyncio
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from backend.mcp import activity
+    from backend.mcp.server import ActivityLogMiddleware
+
+    inner = Starlette(routes=[Route("/", lambda r: PlainTextResponse("ok"), methods=["POST"])])
+    inner.add_middleware(ActivityLogMiddleware)
+    activity.clear()
+    TestClient(inner).post("/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                      "params": {"name": "list_jobs", "arguments": {}}})
+    (event,) = activity.snapshot()
+    assert (event["method"], event["tool"], event["status_code"]) == ("tools/call", "list_jobs", 200)
+    asyncio.run(asyncio.sleep(0))
+
+
+# ── one-click install ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    """The installer writes into the user's home; point it somewhere safe."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    return tmp_path
+
+
+def test_install_merges_into_an_existing_json_config(app_client, fake_home):
+    cfg = fake_home / ".cursor" / "mcp.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"mcpServers": {"other": {"url": "http://x"}}, "theme": "dark"}))
+    r = app_client.post("/api/settings/mcp/install/cursor")
+    assert r.status_code == 200, r.text
+    data = json.loads(cfg.read_text())
+    assert data["theme"] == "dark" and data["mcpServers"]["other"] == {"url": "http://x"}
+    entry = data["mcpServers"]["viralmint"]
+    assert entry["url"].endswith("/mcp/")
+    assert entry["headers"]["Authorization"] == f"Bearer {mcp_token.get_or_create_mcp_token()}"
+    assert (cfg.parent / "mcp.json.viralmint-bak").exists()
+    # Idempotent: a second run leaves one entry, not two.
+    app_client.post("/api/settings/mcp/install/cursor")
+    assert list(json.loads(cfg.read_text())["mcpServers"]) == ["other", "viralmint"]
+
+
+def test_install_refuses_a_config_it_cannot_parse(app_client, fake_home):
+    cfg = fake_home / ".gemini" / "settings.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("{not json")
+    r = app_client.post("/api/settings/mcp/install/gemini_cli")
+    assert r.status_code == 409
+    assert cfg.read_text() == "{not json", "a broken config is left for the user, never replaced"
+
+
+def test_install_codex_keeps_the_rest_of_config_toml(app_client, fake_home):
+    import tomllib
+    cfg = fake_home / ".codex" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('# mine\nmodel = "o5"\n\n[mcp_servers."viralmint"]\nurl = "http://old"\n\n'
+                   '[mcp_servers.viralmint.http_headers]\nAuthorization = "Bearer stale"\n\n'
+                   '[mcp_servers.other]\nurl = "http://other"\n')
+    r = app_client.post("/api/settings/mcp/install/codex")
+    assert r.status_code == 200, r.text
+    text = cfg.read_text()
+    assert text.startswith("# mine\nmodel = \"o5\"")
+    parsed = tomllib.loads(text)
+    assert parsed["mcp_servers"]["other"] == {"url": "http://other"}
+    vm = parsed["mcp_servers"]["viralmint"]
+    assert vm["url"].endswith("/mcp/") and "stale" not in text
+
+
+def test_install_claude_code_needs_the_cli(app_client, fake_home, monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert app_client.post("/api/settings/mcp/install/claude_code").status_code == 409
+
+
+def test_install_rejects_an_unknown_client(app_client, fake_home):
+    assert app_client.post("/api/settings/mcp/install/notepad").status_code == 400
+
+
+def test_install_targets_lists_every_client(app_client, fake_home):
+    (fake_home / ".cursor").mkdir()
+    targets = {t["id"]: t for t in app_client.get("/api/settings/mcp/install/targets").json()["targets"]}
+    assert {"claude_code", "claude_desktop", "codex", "cursor", "windsurf", "gemini_cli"} <= set(targets)
+    assert targets["cursor"]["detected"] is True
+    assert targets["windsurf"]["detected"] is False
 
 
 def test_settings_endpoints_are_async():
     """Sync handlers run on the shared threadpool; these must not."""
     from backend.api import mcp_settings
-    for name in ("get_mcp_config", "test_mcp_connection", "rotate_mcp_token", "list_mcp_tools"):
+    for name in ("get_mcp_config", "test_mcp_connection", "rotate_mcp_token", "list_mcp_tools",
+                 "list_mcp_prompts", "list_mcp_resources", "get_mcp_activity",
+                 "clear_mcp_activity", "mcp_install_targets", "mcp_install_client"):
         assert inspect.iscoroutinefunction(getattr(mcp_settings, name))
 
 
@@ -284,6 +415,9 @@ def test_token_endpoints_refuse_other_machines(peer):
     assert c.get("/api/settings/mcp").status_code == 403
     assert c.post("/api/settings/mcp/rotate").status_code == 403
     assert c.post("/api/settings/mcp/test").status_code == 403
+    # The installer writes files on this machine — same rule as the token.
+    assert c.get("/api/settings/mcp/install/targets").status_code == 403
+    assert c.post("/api/settings/mcp/install/cursor").status_code == 403
     # The tool list carries no secret.
     assert c.get("/api/settings/mcp/tools").status_code == 200
 
