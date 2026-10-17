@@ -80,7 +80,7 @@ def split_text(text: str, limit: int) -> list[str]:
 # (a P0 security fix).
 #
 # Now a freshly connected bot is bound only by a one-time code that the
-# desktop app shows on the Messaging page. Until then it runs nothing; after
+# desktop app shows in Settings → Messaging. Until then it runs nothing; after
 # that it answers its owner and ignores everyone else.
 
 # No 0/O or 1/I/L — the code is read off a screen and typed on a phone.
@@ -281,7 +281,7 @@ async def _notify_delivery_failed(
             constraint=f"{channel_name}_delivery",
             message=(
                 f"A {channel_name.title()} message didn't reach your device. "
-                f"Check your connection or re-pair on the Messaging page."
+                f"Check your connection or re-pair in Settings → Messaging."
             ),
             severity="warning",
             wizard_id=channel_name,

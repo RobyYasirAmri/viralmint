@@ -17,7 +17,7 @@ async (text, user_id) -> str — Telegram replies with the non-streamed response
 
 Ownership: the bot answers exactly ONE private chat — the
 one that sent the pairing code (normally via the t.me/<bot>?start=<code> link
-the Messaging page shows, which Telegram delivers as "/start <code>"). Every other chat
+Settings → Messaging shows, which Telegram delivers as "/start <code>"). Every other chat
 is ignored, commands included. A saved chat_id from an older build keeps
 working as the owner; switching to a different bot token clears it.
 """
@@ -88,7 +88,7 @@ class _UserBot:
         self.app = app
         self.chat_id = chat_id
         self.bot_username = bot_username
-        # Shown on the Messaging page while nobody owns the bot yet; consumed on pairing.
+        # Shown in Settings → Messaging while nobody owns the bot yet; consumed on pairing.
         self.pair_code: Optional[str] = None if chat_id else new_pair_code()
         self._polling_task: Optional[asyncio.Task] = None
 
@@ -156,7 +156,7 @@ class TelegramChannel(MessagingChannel):
                 async with self._lock:
                     await self._spin_up_bot(cfg.user_id, token, chat_id=chat_id)
             except InvalidToken:
-                logger.warning("Telegram token for user=%s was revoked — reconnect it on the Messaging page",
+                logger.warning("Telegram token for user=%s was revoked — reconnect it in Settings → Messaging",
                                cfg.user_id)
             except Exception as e:
                 logger.warning("Failed to start Telegram bot for user=%s: %s — retrying",
@@ -191,7 +191,7 @@ class TelegramChannel(MessagingChannel):
                     return
                 except Exception as e:
                     logger.warning("Telegram retry for user=%s failed: %s", user_id, e)
-            logger.warning("Telegram bot for user=%s could not start — reconnect it on the Messaging page", user_id)
+            logger.warning("Telegram bot for user=%s could not start — reconnect it in Settings → Messaging", user_id)
 
         task = asyncio.create_task(_retry(), name=f"telegram-retry-{user_id}")
         task.add_done_callback(lambda t, uid=user_id: self._retry_tasks.pop(uid, None)
