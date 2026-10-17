@@ -205,9 +205,13 @@ def test_filmstrip_endpoint_reuses_one_cache_entry_for_over_dense_requests(
     assert len(list(strips.glob(f"{vid}_*"))) == 1
 
 
-def test_filmstrip_endpoint_404s_for_a_missing_file(client, tmp_path):
+def test_filmstrip_endpoint_410s_for_a_missing_file(client, tmp_path):
+    """410 + a typed marker, not the bare 404 an unknown id gets — see
+    test_clipper_missing_files.py."""
     vid = asyncio.run(_seed_source(tmp_path / "gone.mp4"))
-    assert client.get(f"/api/downloaded/{vid}/filmstrip").status_code == 404
+    r = client.get(f"/api/downloaded/{vid}/filmstrip")
+    assert r.status_code == 410
+    assert r.headers.get("x-viralmint-error") == "source_file_missing"
 
 
 @needs_ffmpeg

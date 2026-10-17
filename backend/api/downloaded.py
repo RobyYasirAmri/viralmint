@@ -25,6 +25,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ── "The row exists but its file is gone" is its own answer ─────────────
+#
+# A source row outlives its file whenever the file is deleted, moved, or was
+# never under this data dir (a test run that wrote into a dev database left
+# rows pointing at pytest tmpdirs). Every bench read used to answer that with
+# the same bare 404 as "no such video", so the Clipper could not tell the two
+# apart and showed a silent, dead player. Reads now answer 410 Gone (POSTs keep
+# their 400) and every such response carries one machine-readable marker, so a
+# client can key on it without parsing prose. A read never deletes the row —
+# the user decides, from the "File missing" list in the Clipper.
+SOURCE_FILE_MISSING = "source_file_missing"
+# no-store: a 410 is heuristically cacheable, and a cached one outlived the
+# problem — a file put back (or re-downloaded to the same row) still read as
+# missing to the browser until its cache aged out.
+_FILE_MISSING_HEADERS = {"X-ViralMint-Error": SOURCE_FILE_MISSING, "Cache-Control": "no-store"}
+
+
+def source_file_missing(status_code: int = 410,
+                        detail: str = "Video file not found on disk") -> HTTPException:
+    """The typed error for a source row whose video file is not on disk."""
+    return HTTPException(status_code=status_code, detail=detail,
+                         headers=dict(_FILE_MISSING_HEADERS))
+
+
 @router.get("/downloaded")
 async def list_downloaded(
     limit: int = Query(50, le=200),
@@ -85,6 +109,11 @@ async def list_downloaded(
             # Check if files still exist on disk
             video_exists = bool(v.video_path and Path(v.video_path).exists())
             audio_exists = bool(v.audio_path and Path(v.audio_path).exists())
+            # Mirrors get_downloaded_thumbnail's success condition: a cached
+            # thumbnail FILE, else one extracted from the video file. Keying an
+            # <img> off `video_path` being non-empty (a column that survives
+            # the file) fired a 404 per purged row on every render.
+            thumbnail_exists = bool(v.thumbnail_path and Path(v.thumbnail_path).exists())
 
             items.append({
                 "id": v.id,
@@ -97,6 +126,12 @@ async def list_downloaded(
                 "thumbnail_url": thumbnail_url,
                 "source_url": source_url,
                 "file_exists": video_exists or audio_exists,
+                # Video-clip tools (the Clipper) need the VIDEO file
+                # specifically; an audio-only import has file_exists=True but
+                # video_exists=False.
+                "video_exists": video_exists,
+                # True when /downloaded/{id}/thumbnail can actually serve bytes.
+                "thumbnail_available": thumbnail_exists or video_exists,
                 "transcript": v.transcript[:200] if v.transcript else None,
                 "transcript_language": v.transcript_language,
                 "transcript_source": v.transcript_source,
@@ -179,6 +214,9 @@ async def get_downloaded(video_id: str):
             "source_url": source_url,
             "video_path": video.video_path,
             "audio_path": video.audio_path,
+            # The Clipper asks this when its player errors, to tell "the file
+            # is gone" (show the File-missing state) from a playback hiccup.
+            "video_exists": bool(video.video_path and Path(video.video_path).exists()),
             "transcript": video.transcript,
             "transcript_language": video.transcript_language,
             "transcript_source": video.transcript_source,
@@ -1081,7 +1119,7 @@ async def extract_clips(video_id: str, body: ExtractClipsRequest | None = None):
     if not video:
         raise HTTPException(status_code=404, detail="Downloaded video not found")
     if not video.video_path or not Path(video.video_path).exists():
-        raise HTTPException(status_code=400, detail="Video file not found on disk")
+        raise source_file_missing(400)
 
     # Short videos are handled by the extractor's short-video fast-path
     # (SHORT_VIDEO_THRESHOLD): a source under ~20s is emitted as a single
@@ -1212,7 +1250,7 @@ async def suggest_clips(video_id: str, body: SuggestClipsRequest | None = None):
     if not video:
         raise HTTPException(status_code=404, detail="Downloaded video not found")
     if not video.video_path or not Path(video.video_path).exists():
-        raise HTTPException(status_code=400, detail="Video file not found on disk")
+        raise source_file_missing(400)
 
     duration = video.duration_seconds or 0
     min_duration = req.min_duration
@@ -1445,8 +1483,10 @@ async def get_downloaded_thumbnail(video_id: str):
 
     # No thumbnail yet — extract one from the video file.
     video_file = video.video_path
-    if not video_file or not Path(video_file).exists():
+    if not video_file:
         raise HTTPException(status_code=404, detail="No thumbnail or video file available")
+    if not Path(video_file).exists():
+        raise source_file_missing(detail="No thumbnail, and the video file is not on disk")
 
     try:
         from backend.services.ffmpeg_service import extract_thumbnail
@@ -1516,7 +1556,7 @@ async def get_downloaded_filmstrip(
     if not video:
         raise HTTPException(status_code=404, detail="Downloaded video not found")
     if not video.video_path or not Path(video.video_path).exists():
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
+        raise source_file_missing()
 
     src = Path(video.video_path)
     n = max(4, min(96, round(n / _STRIP_COUNT_STEP) * _STRIP_COUNT_STEP))
@@ -1532,7 +1572,7 @@ async def get_downloaded_filmstrip(
     try:
         mtime = int(src.stat().st_mtime)
     except OSError:
-        raise HTTPException(status_code=404, detail="Video file not readable")
+        raise source_file_missing(detail="Video file not readable")
 
     strips = settings.THUMBNAILS_DIR / "strips"
     out = strips / f"{video_id}_{mtime}_{n}x{h}.jpg"
@@ -1596,13 +1636,13 @@ async def get_downloaded_frame(
     if not video:
         raise HTTPException(status_code=404, detail="Downloaded video not found")
     if not video.video_path or not Path(video.video_path).exists():
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
+        raise source_file_missing()
 
     src = Path(video.video_path)
     try:
         mtime = int(src.stat().st_mtime)
     except OSError:
-        raise HTTPException(status_code=404, detail="Video file not readable")
+        raise source_file_missing(detail="Video file not readable")
 
     # Query(ge=0.0) passes `inf` (inf >= 0), and with an unknown duration
     # (fresh import, analyzer not run yet) the tail clamp below is skipped —
@@ -1697,7 +1737,8 @@ async def get_downloaded_segments(video_id: str, limit: int = Query(1500, ge=1, 
 
 
 @router.get("/downloaded/{video_id}/stream")
-async def stream_downloaded(video_id: str, request: Request):
+async def stream_downloaded(video_id: str, request: Request,
+                            require: Optional[str] = Query(None)):
     """Stream a downloaded video with Range support for seeking.
 
     Delegates to `videos.serve_media_with_range` — one implementation, one
@@ -1710,21 +1751,36 @@ async def stream_downloaded(video_id: str, request: Request):
             select(DownloadedVideo).where(DownloadedVideo.id == video_id)
         )
         video = result.scalar_one_or_none()
-    if not video or not (video.video_path or video.audio_path):
+    if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+    if not (video.video_path or video.audio_path):
+        raise source_file_missing()
 
     # The video file when it exists, else the row's audio file. The Library
     # files an audio-only download under Audio and hands out THIS url as its
     # stream_url (library_index._downloaded_items), so a row whose mp4 is gone
     # but whose mp3 remains must still play — it 404'd before.
-    candidates = [c for c in (video.video_path, video.audio_path) if c]
+    #
+    # `?require=video` turns that fallback off. The Clipper's bench is a VIDEO
+    # surface: handed the mp3 of a row whose mp4 is gone, its <video> played
+    # sound over a black frame and raised no error at all — the dead player,
+    # silently. With the flag the bench gets the typed 410 and says why.
+    if require == "video":
+        candidates = [video.video_path] if video.video_path else []
+    else:
+        candidates = [c for c in (video.video_path, video.audio_path) if c]
     path = next((Path(c).resolve() for c in candidates if Path(c).exists()), None)
     if path is None:
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
+        raise source_file_missing()
     # Validate path is within storage directory (prevent path traversal)
     from backend.config import settings as app_settings
     if not path.is_relative_to(app_settings.STORAGE_ROOT.resolve()):
-        raise HTTPException(status_code=403, detail="Access denied")
+        # Typed too: a row written under another data dir (the folder moved,
+        # or VIRALMINT_DATA_DIR changed) has a real file this route refuses to
+        # serve, and the player has to say so rather than sit there black.
+        raise HTTPException(status_code=403, detail="Access denied",
+                            headers={"X-ViralMint-Error": "source_outside_storage",
+                                     "Cache-Control": "no-store"})
 
     from backend.api.videos import serve_media_with_range
     return serve_media_with_range(path, request, filename=path.name)

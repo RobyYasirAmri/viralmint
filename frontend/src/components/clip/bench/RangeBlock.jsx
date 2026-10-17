@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
-import { Box, Typography } from "@mui/material"
+import { Box, Typography, alpha } from "@mui/material"
 import { onActivate } from "../../../utils/a11y"
+import { formatDuration } from "../../../utils/format"
 import CloseIcon from "@mui/icons-material/Close"
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined"
 
@@ -47,7 +48,7 @@ export default function RangeBlock({
         // Selected reads as a solid tinted pane with a bright rim; the
         // others sit back so a busy timeline still has one obvious subject.
         bgcolor: selected
-          ? "rgba(99,179,237,0.30)"
+          ? alpha(t.palette.primary.main, 0.30)
           : t.palette.mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(25,45,90,0.16)",
         border: "2px solid",
         borderColor: selected ? "primary.main" : "transparent",
@@ -126,7 +127,7 @@ export default function RangeBlock({
             textShadow: "0 1px 3px rgba(0,0,0,0.9)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "clip",
           }}>
-            {len < 60 ? `${len.toFixed(1)}s` : `${Math.floor(len / 60)}m${String(Math.round(len % 60)).padStart(2, "0")}`}
+            {formatDuration(len)}
           </Typography>
         )}
       </Box>

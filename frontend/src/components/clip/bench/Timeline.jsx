@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Box, CircularProgress, Stack, Typography } from "@mui/material"
+import { Box, CircularProgress, Stack, Typography, alpha } from "@mui/material"
 import RangeBlock from "./RangeBlock"
 import { formatTime } from "../clipFormat"
+import { usePlayhead, usePlayheadStore } from "./playheadStore"
 
 /* ── The cutting bench timeline ────────────────────────────────
    Four stacked lanes over one shared time axis:
@@ -19,13 +20,6 @@ import { formatTime } from "../clipFormat"
    listeners, so a drag that leaves the element still ends cleanly.
 */
 
-// The filmstrip lane is a FIXED dark plate (#0b0d12) in BOTH themes, because a
-// filmstrip sits on it — so the theme's text colours do not apply to it. In
-// light mode `text.disabled` resolves to a dark grey that measures 3.14:1 here,
-// i.e. unreadable, which is exactly what the lane's own status messages were
-// rendered in. 7.7:1 against the plate, in either theme.
-const LANE_TEXT = "#9aa4b5"
-
 const STRIP_H = 64      // filmstrip / range lane height
 const SPEECH_H = 12
 const GHOST_H = 8
@@ -36,6 +30,20 @@ const DRAG_THRESHOLD_PX = 4  // below this a press is a seek, not a new range
 // Cell count is quantized backend-side too; matching the step here means a
 // resize inside one step reuses the cached strip instead of rebuilding it.
 const STRIP_STEP = 4
+
+// The filmstrip lane is a FIXED dark plate (#0b0d12) in BOTH themes, because a
+// filmstrip sits on it — so the theme's text colours do not apply to it. In
+// light mode `text.disabled` resolves to a dark grey that measures 3.14:1 here,
+// i.e. unreadable, which is exactly what the lane's own status messages were
+// rendered in. 7.7:1 against the plate, in either theme.
+const LANE_TEXT = "#9aa4b5"
+
+// Module constants, not per-render literals: SpeechLane / GhostLane / Ruler are
+// memoized, and a fresh `laneSx` object (or a fresh `[]` default) on every
+// render made that memo decoration — they re-rendered on every pointermove
+// of a drag and every playhead tick (audit 2026-09-25).
+const LANE_SX = { position: "relative", width: "100%", overflow: "hidden" }
+const NONE = []
 
 function niceStep(duration, width) {
   // Aim for a label roughly every 90px, snapped to a human interval.
@@ -48,11 +56,11 @@ export default function Timeline({
   sourceId,
   duration,
   aspect = 16 / 9,        // source frame aspect, for sizing filmstrip cells
-  segments = [],          // [{start, end, text}]
-  ranges = [],
+  segments = NONE,        // [{start, end, text}]
+  ranges = NONE,
   activeId,
-  ghosts = [],            // [{start, end}] — clips already cut from this source
-  playhead = 0,
+  ghosts = NONE,          // [{start, end}] — clips already cut from this source
+  playhead = 0,           // a playhead store (playheadStore.js) or a number
   snapEnabled = true,
   onSeek,
   onRangeSelect,
@@ -63,7 +71,9 @@ export default function Timeline({
   onStrip,                // ({url, cells}) => void — the IN/OUT panes reuse
                           // this exact sprite as their instant proxy, so it
                           // must be the same URL the browser already cached
+  onDragChange,           // (bool) => void — a range edge / body is being dragged
 }) {
+  const clock = usePlayheadStore(playhead)
   const trackRef = useRef(null)
   const [width, setWidth] = useState(0)
   const [drag, setDrag] = useState(null)   // {kind, id, rect, grabOffset, span}
@@ -76,6 +86,7 @@ export default function Timeline({
   //   "truncated" the file decodes its OPENING frames and nothing after: a
   //               download that stopped part-way. Most of the timeline is
   //               unusable even though the first seconds look fine.
+  //   "missing"   the row's file is not on disk at all (the frame route 410s).
   //   "dead"      no readable video at all — a download cancelled mid-write
   //               leaves a valid header, a plausible duration and no data.
   // "the timeline still works" is true only in the first case; in the other
@@ -136,19 +147,19 @@ export default function Timeline({
   useEffect(() => {
     if (!stripFailed || !sourceId) { setReadable("ok"); return }
     let alive = true
-    const at = (t) => new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => resolve(true)
-      img.onerror = () => resolve(false)
-      img.src = `/api/downloaded/${sourceId}/frame?t=${t}&w=64`
-    })
+    // fetch, not an <img>: the STATUS is the answer. 410 means the row's file
+    // is not on disk at all (source_file_missing) — a different message from
+    // "it exists but will not decode".
+    const at = (t) => fetch(`/api/downloaded/${sourceId}/frame?t=${t}&w=64`)
+      .then((r) => (r.ok ? true : r.status === 410 ? "missing" : false))
+      .catch(() => false)
     // A hair inside the end: a container's duration runs to the END of its
     // last frame, so seeking exactly there decodes nothing even on a healthy
     // file — the same tail clamp the strip builder applies.
     const tail = Math.max(0, (duration || 0) - 0.5)
     Promise.all([at(0), at(tail.toFixed(2))]).then(([head, end]) => {
       if (!alive) return
-      setReadable(!head ? "dead" : !end ? "truncated" : "ok")
+      setReadable(head === "missing" ? "missing" : !head ? "dead" : end !== true ? "truncated" : "ok")
     })
     return () => { alive = false }
   }, [stripFailed, sourceId, duration])
@@ -197,6 +208,7 @@ export default function Timeline({
     const r = ranges.find((x) => x.id === id)
     if (!rect || !r) return
     e.currentTarget.setPointerCapture?.(e.pointerId)
+    onDragChange?.(true)
     setDrag({
       kind, id, rect,
       // Where inside the block the cursor grabbed, so a moved block
@@ -229,9 +241,9 @@ export default function Timeline({
       let lo = Math.min(a, b)
       let hi = Math.max(a, b)
       // Clamp the draft against existing blocks so the preview shows what
-      // add() will actually accept (it refuses overlaps — see the note
-      // there). Without this the draft sweeps across a pending block and
-      // then visibly shrinks on release, which reads as a glitch.
+      // add() will actually accept (it refuses overlaps — see the money
+      // note there). Without this the draft sweeps across a pending block
+      // and then visibly shrinks on release, which reads as a glitch.
       for (const r of ranges) {
         if (lo >= r.start && lo < r.end) lo = r.end
         if (hi > r.start && lo <= r.start) hi = r.start
@@ -251,7 +263,7 @@ export default function Timeline({
   const endDrag = () => {
     if (!drag) return
     if (drag.kind === "create") { if (draft) onRangeAdd?.(draft.start, draft.end) }
-    else onRangeCommit?.()
+    else { onRangeCommit?.(); onDragChange?.(false) }
     setDraft(null)
     setDrag(null)
   }
@@ -265,8 +277,6 @@ export default function Timeline({
     return out
   }, [duration, width])
 
-  const laneSx = { position: "relative", width: "100%", overflow: "hidden" }
-
   return (
     <Box sx={{ width: "100%", userSelect: "none" }}>
       <Box
@@ -279,7 +289,7 @@ export default function Timeline({
       >
         {/* ── Filmstrip + range lane ─────────────────────── */}
         <Box sx={{
-          ...laneSx,
+          ...LANE_SX,
           height: STRIP_H,
           borderRadius: 1.5,
           bgcolor: "#0b0d12",
@@ -325,23 +335,27 @@ export default function Timeline({
               textAlign: "center", px: 2,
               color: LANE_TEXT, pointerEvents: "none",
             }}>
-              {readable === "dead"
-                ? "This video has no readable frames — it may be an incomplete or cancelled download"
-                : readable === "truncated"
-                  ? "Only the beginning of this video is readable — it looks like an unfinished download, so most of the timeline won't play or cut"
-                  : "Preview frames unavailable — the timeline still works"}
+              {readable === "missing"
+                ? "This video's file is no longer on disk — it can't be played or cut"
+                : readable === "dead"
+                  ? "This video has no readable frames — it may be an incomplete or cancelled download"
+                  : readable === "truncated"
+                    ? "Only the beginning of this video is readable — it looks like an unfinished download, so most of the timeline won't play or cut"
+                    : "Preview frames unavailable — the timeline still works"}
             </Typography>
           )}
 
           {/* Live drag-create preview */}
           {draft && (
-            <Box sx={{
+            <Box sx={(t) => ({
               position: "absolute", top: 0, bottom: 0,
               left: toX(draft.start), width: Math.max(2, toX(draft.end - draft.start)),
-              bgcolor: "rgba(99,179,237,0.35)",
+              // The app's accent, like the committed block it becomes —
+              // it was a hardcoded blue on an orange app.
+              bgcolor: alpha(t.palette.primary.main, 0.35),
               border: "2px solid", borderColor: "primary.main",
               borderRadius: 1.5, pointerEvents: "none",
-            }} />
+            })} />
           )}
 
           {ranges.map((r, i) => (
@@ -360,13 +374,7 @@ export default function Timeline({
           ))}
 
           {/* Playhead — drawn last so it reads above every block. */}
-          <Box sx={{
-            position: "absolute", top: -2, bottom: -2,
-            left: toX(playhead), width: 2, ml: "-1px",
-            bgcolor: "#fff",
-            boxShadow: "0 0 0 1px rgba(0,0,0,0.7), 0 0 8px rgba(255,255,255,0.5)",
-            pointerEvents: "none",
-          }} />
+          <PlayheadMark clock={clock} pxPerSec={pxPerSec} />
         </Box>
 
         {/* ── Speech + already-cut + ruler ────────────────
@@ -374,9 +382,9 @@ export default function Timeline({
             none of them changes while a range is dragged. Before that, a
             pointermove re-rendered 235 MUI Boxes for the speech lane
             alone, each recompiling its `sx` through emotion. */}
-        <SpeechLane segments={segments} pxPerSec={pxPerSec} laneSx={laneSx} />
-        <GhostLane ghosts={ghosts} pxPerSec={pxPerSec} laneSx={laneSx} />
-        <Ruler ticks={ticks} pxPerSec={pxPerSec} laneSx={laneSx} />
+        <SpeechLane segments={segments} pxPerSec={pxPerSec} />
+        <GhostLane ghosts={ghosts} pxPerSec={pxPerSec} />
+        <Ruler ticks={ticks} pxPerSec={pxPerSec} />
       </Box>
     </Box>
   )
@@ -387,9 +395,24 @@ export default function Timeline({
    these render one node per segment and emotion's per-node style
    compilation is what made a busy transcript expensive. */
 
-const SpeechLane = memo(function SpeechLane({ segments, pxPerSec, laneSx }) {
+// The playhead line: the one part of the timeline that moves during
+// playback, and the only part subscribed to the playhead store.
+function PlayheadMark({ clock, pxPerSec }) {
+  const t = usePlayhead(clock)
   return (
-    <Box sx={{ ...laneSx, height: SPEECH_H, mt: 0.5 }}>
+    <div data-testid="bench-playhead" style={{
+      position: "absolute", top: -2, bottom: -2,
+      left: pxPerSec ? t * pxPerSec : 0, width: 2, marginLeft: -1,
+      background: "#fff",
+      boxShadow: "0 0 0 1px rgba(0,0,0,0.7), 0 0 8px rgba(255,255,255,0.5)",
+      pointerEvents: "none",
+    }} />
+  )
+}
+
+const SpeechLane = memo(function SpeechLane({ segments, pxPerSec }) {
+  return (
+    <Box sx={{ ...LANE_SX, height: SPEECH_H, mt: 0.5 }}>
       {segments.length === 0 ? (
         <Box sx={{ position: "absolute", inset: 0, borderRadius: 1, bgcolor: "action.hover" }} />
       ) : segments.map((s, i) => (
@@ -405,9 +428,9 @@ const SpeechLane = memo(function SpeechLane({ segments, pxPerSec, laneSx }) {
   )
 })
 
-const GhostLane = memo(function GhostLane({ ghosts, pxPerSec, laneSx }) {
+const GhostLane = memo(function GhostLane({ ghosts, pxPerSec }) {
   return (
-    <Box sx={{ ...laneSx, height: GHOST_H, mt: "2px" }}>
+    <Box sx={{ ...LANE_SX, height: GHOST_H, mt: "2px" }}>
       {ghosts.map((g, i) => (
         <div key={i} style={{
           position: "absolute", top: 1, bottom: 1,
@@ -421,9 +444,9 @@ const GhostLane = memo(function GhostLane({ ghosts, pxPerSec, laneSx }) {
   )
 })
 
-const Ruler = memo(function Ruler({ ticks, pxPerSec, laneSx }) {
+const Ruler = memo(function Ruler({ ticks, pxPerSec }) {
   return (
-    <Box sx={{ ...laneSx, height: RULER_H, mt: "2px" }}>
+    <Box sx={{ ...LANE_SX, height: RULER_H, mt: "2px" }}>
       {ticks.map((t) => (
         <div key={t} style={{
           position: "absolute", left: t * pxPerSec, top: 0,

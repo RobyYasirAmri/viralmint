@@ -164,16 +164,34 @@ export const GlassPanel = forwardRef(function GlassPanel({ sx, cheap = false, ..
  *               See glassPanelSx for the rationale.
  */
 export const GlassCard = forwardRef(function GlassCard(
-  { selected = false, hover = true, cheap = false, sx, ...rest },
+  { selected = false, hover = true, cheap = false, sx, onClick, onKeyDown, role, tabIndex, ...rest },
   ref,
 ) {
+  // When the card is clickable, make it keyboard-operable (a bare <Paper>
+  // with onClick isn't focusable and doesn't fire on Enter/Space). Callers
+  // can still override role/tabIndex/onKeyDown explicitly. Only keys aimed at
+  // the CARD activate it: Space on a checkbox inside a card (the Clipper's
+  // filmstrip) must toggle the checkbox, not also select the card.
+  const clickable = typeof onClick === "function"
+  const handleKeyDown = (e) => {
+    if (clickable && e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault()
+      onClick(e)
+    }
+    onKeyDown?.(e)
+  }
   return (
     <Paper
       ref={ref}
       elevation={0}
+      onClick={onClick}
+      role={role ?? (clickable ? "button" : undefined)}
+      tabIndex={tabIndex ?? (clickable ? 0 : undefined)}
+      onKeyDown={clickable ? handleKeyDown : onKeyDown}
       {...rest}
       sx={(theme) => ({
         ...glassCardSx(theme, { hover, selected, cheap }),
+        ...(clickable && { "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 2 } }),
         ...(typeof sx === "function" ? sx(theme) : sx),
       })}
     />

@@ -129,7 +129,7 @@ class TestListing:
 
     def test_streaming_a_vanished_file_is_refused(self, client, seeded):
         assert client.get(
-            f"/api/downloaded/{seeded['gone']}/stream").status_code in (403, 404)
+            f"/api/downloaded/{seeded['gone']}/stream").status_code in (403, 410)
 
     def test_a_thumbnail_is_generated_on_demand(self, client, seeded, monkeypatch):
         """The row usually has no thumbnail_path; the route makes one from the
@@ -148,9 +148,12 @@ class TestListing:
         r = client.get(f"/api/downloaded/{seeded['ok']}/thumbnail")
         assert r.status_code in (200, 404)
 
-    def test_a_thumbnail_for_a_missing_file_is_a_404(self, client, seeded):
-        assert client.get(
-            f"/api/downloaded/{seeded['gone']}/thumbnail").status_code == 404
+    def test_a_thumbnail_for_a_missing_file_is_a_typed_410(self, client, seeded):
+        """410 + marker: the row exists, its file does not — distinct from an
+        unknown id (test_clipper_missing_files.py)."""
+        r = client.get(f"/api/downloaded/{seeded['gone']}/thumbnail")
+        assert r.status_code == 410
+        assert r.headers.get("x-viralmint-error") == "source_file_missing"
 
 
 # ── manual time-range validation ────────────────────────────────────────────
