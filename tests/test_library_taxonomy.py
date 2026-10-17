@@ -24,14 +24,25 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _emitted_job_types() -> set[str]:
-    """Every job type the tool endpoints actually create.
+    """Every job type this variant actually creates, anywhere in backend/.
 
     Read out of the source rather than listed here on purpose: a hand-written
     copy is one more thing to forget when a tool is added, and forgetting is
-    precisely the failure being guarded against.
+    precisely the failure being guarded against. Backend-wide, not just
+    tools.py — a render, a batch or a download that Activity cannot name reads
+    as a raw key in the panel.
     """
-    src = (REPO / "backend/api/tools.py").read_text(encoding="utf-8")
-    return set(re.findall(r'create_job\(\s*"(tool:[a-z_]+)"', src))
+    found: set[str] = set()
+    for py in (REPO / "backend").rglob("*.py"):
+        src = py.read_text(encoding="utf-8")
+        found.update(re.findall(r'create_job\(\s*"([a-z_]+(?::[a-z_]+)?)"', src))
+    return found
+
+
+def _js_object_keys(js: str, name: str) -> set[str]:
+    """Keys of a top-level `export const NAME = { … }` literal in assetModel.js."""
+    block = js.split(f"export const {name} = {{", 1)[1].split("\n}\n", 1)[0]
+    return set(re.findall(r'^\s*"?([A-Za-z_][\w:]*)"?:\s', block, re.M))
 
 
 def test_every_tool_endpoint_job_type_is_accounted_for():
@@ -41,7 +52,9 @@ def test_every_tool_endpoint_job_type_is_accounted_for():
     from backend.services.library_taxonomy import NON_LIBRARY_JOB_TYPES, classify
 
     emitted = _emitted_job_types()
-    assert emitted, "parsed no job types out of backend/api/tools.py — did its shape change?"
+    assert {"scout", "generate", "tool:captions"} <= emitted, (
+        "parsed too few job types out of backend/ — did create_job's shape change?"
+    )
 
     unaccounted = sorted(
         jt for jt in emitted
@@ -51,6 +64,58 @@ def test_every_tool_endpoint_job_type_is_accounted_for():
         f"job types with no taxonomy entry: {unaccounted} — add them to "
         "PRODUCERS, or to NON_LIBRARY_JOB_TYPES if they genuinely write no file"
     )
+
+
+def test_the_taxonomy_lists_only_job_types_this_variant_creates():
+    """The map was ported from the hosted app, which has tools this one does
+    not (AI Image, AI Music, voice cloning, …). A producer or a file-less entry
+    for a job type nothing here creates is a filter option, a label and a test
+    fixture for a feature that does not exist — so every `tool:` producer and
+    every NON_LIBRARY entry must be a job type some `create_job` call emits."""
+    from backend.services.library_taxonomy import NON_LIBRARY_JOB_TYPES, PRODUCERS
+
+    emitted = _emitted_job_types()
+    phantom_tools = sorted(k for k in PRODUCERS if k.startswith("tool:") and k not in emitted)
+    phantom_file_less = sorted(NON_LIBRARY_JOB_TYPES - emitted)
+    assert phantom_tools == [], f"producers for tools this variant never runs: {phantom_tools}"
+    assert phantom_file_less == [], f"file-less job types nothing creates: {phantom_file_less}"
+
+
+def test_generated_video_source_types_all_classify():
+    """A generated_videos row is filed by its `source_type`; a NULL one is the
+    stock render. A source_type written somewhere and missing from the map is a
+    video the Library silently drops."""
+    from backend.services.library_taxonomy import classify
+
+    written: set[str] = set()
+    for py in (REPO / "backend").rglob("*.py"):
+        written.update(re.findall(r'source_type\s*=\s*"([a-z_]+)"', py.read_text(encoding="utf-8")))
+    assert "clip_extraction" in written, "parsed no source_type literals — did the shape change?"
+    unclassified = sorted(t for t in written | {"smart_video"} if classify(t) is None)
+    assert unclassified == [], f"generated_videos.source_type values with no producer: {unclassified}"
+
+
+def test_activity_can_name_every_job_this_variant_creates():
+    """Activity labels a job from the frontend twin: PRODUCERS for a job that
+    makes a library item, JOB_ONLY_LABELS for one that doesn't. A job type in
+    neither shows up in the panel as its raw key ("batch_generate"), and a label
+    for a type nothing creates is dead weight carried over from the hosted app.
+    A key in both is a contradiction (no pending tile, then a link to the item
+    it "didn't" make)."""
+    from backend.services.library_taxonomy import normalize_producer_key
+
+    js = (REPO / "frontend/src/components/librarynext/assetModel.js").read_text(encoding="utf-8")
+    producers = _js_object_keys(js, "PRODUCERS")
+    job_only = _js_object_keys(js, "JOB_ONLY_LABELS")
+    assert producers and job_only, "could not parse the maps out of assetModel.js"
+
+    emitted = {normalize_producer_key(t) for t in _emitted_job_types()}
+    unnamed = sorted(t for t in emitted if t not in producers and t not in job_only)
+    assert unnamed == [], f"job types Activity would show as a raw key: {unnamed}"
+    stale = sorted(job_only - emitted)
+    assert stale == [], f"Activity labels for job types nothing creates: {stale}"
+    both = sorted(job_only & producers)
+    assert both == [], f"in PRODUCERS and JOB_ONLY_LABELS at once: {both}"
 
 
 def test_no_producer_claims_a_job_type_that_is_also_declared_file_less():

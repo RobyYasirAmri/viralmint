@@ -12,7 +12,7 @@
  * page. It repeats as the connector in the by-source view, so one visual
  * device answers "where did this come from?" in both layouts.
  */
-import { useState } from "react"
+import { memo, useState } from "react"
 import { Box, Typography, Stack, IconButton, Tooltip, alpha, useTheme } from "@mui/material"
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded"
 import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded"
@@ -21,8 +21,7 @@ import MovieRoundedIcon from "@mui/icons-material/MovieRounded"
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded"
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded"
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded"
-import BoltRoundedIcon from "@mui/icons-material/BoltRounded"
-import { ORIGINS, originColor, originTextColor, fmtDay, waveformBars } from "./assetModel"
+import { ORIGINS, originColor, originTextColor, fmtDay, fmtScore, waveformBars } from "./assetModel"
 import { formatClock } from "../../utils/format"
 
 const MEDIA_ICON = {
@@ -39,25 +38,41 @@ const MOTION_BASE = "0.2s"
 const MOTION_FAST = "0.12s"
 const MOTION_EASE = "cubic-bezier(0.4, 0, 0.2, 1)"
 
-export default function AssetTile({
+/**
+ * Memoised: the grid re-renders on every jobs poll and every selection change,
+ * and a 48-tile page re-rendering each tile for a change to one of them was
+ * the Library's steadiest source of wasted work. The page passes stable
+ * handlers (useCallback) so the shallow compare actually holds.
+ *
+ * Keyboard: the grid is ONE tab stop (roving tabIndex, owned by the page —
+ * arrows move between tiles). Tab from the focused tile walks into ITS
+ * controls — select, More — then out of the grid. Before, every tile
+ * was five stops, so crossing a 48-tile page took ~240 presses. "Play" is
+ * mouse-only: it does exactly what Enter on the tile does.
+ */
+function AssetTile({
   item,
   dense = false,
   selected = false,
   anySelected = false,
+  tabIndex = 0,
   onOpen,
   onToggleSelect,
- 
   onMore,
+  onFocusTile,
 }) {
   const theme = useTheme()
   const isDark = theme.palette.mode === "dark"
   const [hovered, setHovered] = useState(false)
   // Focus is the keyboard's hover. Every control on this tile — select, play,
-  // play, more — was rendered only while `hovered`, which a keyboard user
+  // more — was rendered only while `hovered`, which a keyboard user
   // never triggers, so none of them existed in the DOM to tab to. React's
   // onFocus/onBlur bubble (focusin/focusout semantics), so this catches focus
   // landing on the tile OR on anything inside it.
   const [focused, setFocused] = useState(false)
+  // The poster request failed — a file ffmpeg could not read, or one that
+  // has gone since the page loaded. Said in words on the tile rather than
+  // left as an empty frame.
   const [broken, setBroken] = useState(false)
   const active = hovered || focused
 
@@ -65,7 +80,8 @@ export default function AssetTile({
   const ocText = originTextColor(item.origin, isDark)
   const frameH = dense ? 112 : 148
   const MediaIcon = MEDIA_ICON[item.media] || MovieRoundedIcon
-  const showPoster = (item.media === "video" || item.media === "image") && item.thumb_url && !broken
+  const visual = item.media === "video" || item.media === "image"
+  const showPoster = visual && item.thumb_url && !broken
   const badge = item.aspect || (item.ext ? item.ext.toUpperCase() : null)
   const dur = formatClock(item.duration_seconds)
 
@@ -73,10 +89,19 @@ export default function AssetTile({
     <Box
       role="button"
       data-testid="asset-tile"
-      tabIndex={0}
+      data-key={item.key}
+      // The accessible name is the TITLE. Without it, a role="button" takes its
+      // name from all of its text — badge, duration, title, origin, tool and
+      // date read as one run-on blob.
+      aria-label={item.title || "Untitled"}
+      aria-pressed={anySelected ? selected : undefined}
+      tabIndex={tabIndex}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
+      onFocus={(e) => {
+        setFocused(true)
+        if (e.target === e.currentTarget) onFocusTile?.(item.key)
+      }}
       onBlur={(e) => {
         // Only when focus leaves the tile entirely — moving between the
         // tile's own controls must not tear them out from under the user.
@@ -88,6 +113,7 @@ export default function AssetTile({
       // control. Space is handled because this claims role="button", and a
       // real button responds to both (preventDefault stops the page scrolling).
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return   // a control inside handles its own keys
         if (e.key !== "Enter" && e.key !== " ") return
         e.preventDefault()
         if (anySelected) onToggleSelect?.(item)
@@ -104,6 +130,11 @@ export default function AssetTile({
         boxShadow: selected ? theme.customShadows?.md : theme.customShadows?.sm,
         transition: `transform ${MOTION_BASE} ${MOTION_EASE}, box-shadow ${MOTION_BASE} ${MOTION_EASE}, border-color ${MOTION_FAST} ease`,
         "&:hover": { transform: "translateY(-2px)", boxShadow: theme.customShadows?.lg },
+        // Drawn inside the border: the theme's global ring is an outer
+        // box-shadow, which the tile's own hover shadow replaces.
+        "&:focus-visible": {
+          outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: "2px",
+        },
         "@media (prefers-reduced-motion: reduce)": { transition: "none", "&:hover": { transform: "none" } },
       }}
     >
@@ -153,13 +184,21 @@ export default function AssetTile({
             </Typography>
           </Box>
         ) : (
-          // Poster-less video/image → provenance-tinted plate, never an empty box
-          <Box sx={{
-            height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-            background: `linear-gradient(135deg, ${alpha(oc, isDark ? 0.22 : 0.16)}, ${alpha(oc, 0.03)})`,
-          }}>
-            <MediaIcon sx={{ fontSize: 30, color: alpha(oc, 0.55) }} />
-          </Box>
+          // Poster-less video/image → provenance-tinted plate with a WORD,
+          // never an empty box. A bare tinted plate on the dark canvas read as
+          // a black tile — a broken card, not "no picture for this one". The
+          // index asks for a frame from every video it can read, so reaching
+          // here means the file couldn't give one.
+          <Stack data-testid="tile-no-preview" alignItems="center" justifyContent="center" spacing={0.5}
+            sx={{
+              height: "100%", px: 1.5, textAlign: "center",
+              background: `linear-gradient(135deg, ${alpha(oc, isDark ? 0.22 : 0.16)}, ${alpha(oc, 0.03)})`,
+            }}>
+            <MediaIcon sx={{ fontSize: 28, color: alpha(oc, isDark ? 0.75 : 0.6) }} />
+            <Typography sx={{ fontSize: "0.66rem", fontWeight: 600, color: "text.secondary", lineHeight: 1.3 }}>
+              {broken || item.poster_failed ? "Preview unavailable" : "No preview"}
+            </Typography>
+          </Stack>
         )}
 
         {/* Aspect / extension badge */}
@@ -214,13 +253,12 @@ export default function AssetTile({
             {dur && <Pill>{dur}</Pill>}
             {item.status === "failed" && <Pill tone="error">Failed</Pill>}
             {item.status === "draft" && <Pill>Draft</Pill>}
-            {item.hook_score != null && (
-              <Pill><BoltRoundedIcon sx={{ fontSize: 11, mr: 0.2, mb: "-1px" }} />{item.hook_score}</Pill>
-            )}
+            {item.hook_score != null && <Pill>Hook {fmtScore(item.hook_score)}</Pill>}
           </Stack>
           {active && (
             <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
               <FrameAction title={item.media === "image" || item.media === "doc" ? "Open" : "Play"}
+                tabIndex={-1}
                 onClick={(e) => { e.stopPropagation(); onOpen?.(item) }}>
                 <PlayArrowRoundedIcon sx={{ fontSize: 16 }} />
               </FrameAction>
@@ -242,9 +280,9 @@ export default function AssetTile({
           {item.title}
         </Typography>
         <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.4, minWidth: 0 }}>
+          <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: oc, flexShrink: 0 }} />
           {/* Text steps down to the readable variant; the dot beside it keeps
               the brand colour (decoration clears its own 3:1 floor). */}
-          <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: oc, flexShrink: 0 }} />
           <Typography sx={{
             fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.07em",
             textTransform: "uppercase", color: ocText, flexShrink: 0,
@@ -255,7 +293,7 @@ export default function AssetTile({
           <Typography noWrap sx={{ fontSize: "0.68rem", color: "text.secondary", minWidth: 0 }}>
             {item.producer}
           </Typography>
-          <Typography sx={{ fontSize: "0.68rem", color: "text.disabled", flexShrink: 0, ml: "auto" }}>
+          <Typography sx={{ fontSize: "0.68rem", color: "text.secondary", flexShrink: 0, ml: "auto" }}>
             {fmtDay(item.created_at)}
           </Typography>
         </Stack>
@@ -278,10 +316,12 @@ function Pill({ children, tone }) {
   )
 }
 
-function FrameAction({ title, onClick, children }) {
+export default memo(AssetTile)
+
+function FrameAction({ title, onClick, children, tabIndex }) {
   return (
     <Tooltip title={title} enterDelay={400}>
-      <IconButton size="small" onClick={onClick} aria-label={title}
+      <IconButton size="small" onClick={onClick} aria-label={title} tabIndex={tabIndex}
         sx={{
           width: 24, height: 24, color: "#fff", bgcolor: "rgba(0,0,0,0.58)",
           "&:hover": { bgcolor: "rgba(0,0,0,0.72)" },

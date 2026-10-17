@@ -43,7 +43,8 @@ export function writeJson(key, value) {
   }
 }
 
-/** Read a raw string value. */
+/** Read a raw string value. Returns `fallback` when storage is unavailable
+ *  (private mode, blocked site data) — the accessor can throw. */
 export function readRaw(key, fallback = null) {
   try {
     return localStorage.getItem(key) ?? fallback
@@ -52,7 +53,7 @@ export function readRaw(key, fallback = null) {
   }
 }
 
-/** Write a raw string value. */
+/** Write a raw string value. Silently no-ops when storage is unavailable. */
 export function writeRaw(key, value) {
   try {
     localStorage.setItem(key, value)

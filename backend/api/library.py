@@ -7,7 +7,7 @@
     GET    /api/library/item?key=             one row (title, urls, store)
     GET    /api/library/lineage?key=          ancestors + children
     GET    /api/library/taxonomy              axis labels + the producer map
-    GET    /api/library/poster?key=job:<id>   extracted frame for a tool video
+    GET    /api/library/poster?key=&w=        grid poster: a frame, or a scaled image
     GET    /api/library/asset/{job_id}        stream/download a tool output
     DELETE /api/library/asset/{job_id}        remove the row and its file
     POST   /api/library/bulk-delete           the same, for a selection
@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 # Seek past a black intro frame. A clip SHORTER than this yields no frame at
 # all, which is handled at the callsite rather than by lowering the seek.
 POSTER_SEEK_SECONDS = 2.0
+
+# Image outputs the poster endpoint downscales instead of extracting from.
+# `.gif` is included: thumb_scale rescales every frame, so the tile still
+# animates (library_index.ANIMATED_SUFFIXES lists what stays on the raw URL).
+_POSTER_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 
 # MIME by suffix used to live here as a second copy. It is `videos._MEDIA_TYPES`
 # now — the same map the range-aware streamer picks a Content-Type from, so an
@@ -151,45 +156,78 @@ async def get_taxonomy():
 
 @router.get("/poster")
 async def get_poster(
-    key: str = Query(..., description='Item key of a job-produced video, e.g. "job:<id>"'),
+    key: str = Query(..., description='Item key: "job:<id>", or "gv:<id>" / "dl:<id>" with no stored thumbnail'),
+    w: int | None = Query(None, description="Grid width — see thumb_scale.ALLOWED_WIDTHS"),
+    v: str | None = Query(None, description="Ignored; a cache-buster the caller may add"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Poster frame for a tool-produced video, extracted on first request.
+    """Grid poster for a library item, built on first request.
 
     Nothing in the tool pipeline writes a thumbnail, so every edited video — a
-    captioned cut, a reframe, a merge — had no image to show. Extract one frame
-    past any black intro, cache it, serve it.
+    captioned cut, a reframe, a merge — had no image to show; nor did an import,
+    a download whose platform served none, or a render whose thumbnail step
+    failed. Extract one frame (2s in, past any black intro), cache it under
+    THUMBNAILS_DIR, and serve it. No DB write: this is a read.
 
-    404 when the key isn't an indexed job video or extraction fails; the tile
-    falls back to its provenance-tinted plate, which is why this can be lazy.
+    An IMAGE output takes the same route minus the extraction — it is already
+    its own poster, but at full resolution, so it gets the same downscaled,
+    `immutable` copy every video tile gets.
+
+    404 when the key names no indexed image/video, or the file cannot be read
+    (a corrupt or truncated video). The tile then shows an explicit "no
+    preview" state. A failed extraction is remembered until the source file
+    changes, so a broken file costs one ffmpeg run, not one per page load.
     """
     from backend.config import settings as app_settings
-    from backend.services.ffmpeg_service import extract_thumbnail
+    from backend.services import thumb_scale
+    from backend.services.ffmpeg_service import extract_frame_at
 
     src = await library_index.poster_source(db, key)
-    if src is None:
+    stem = library_index.poster_cache_stem(key)
+    if src is None or stem is None:
         raise HTTPException(status_code=404, detail="No poster for that item")
 
-    # One cache file per job id. `key` came back from the index and the id is a
-    # UUID, so it cannot escape the directory.
-    job_id = key.split(":", 1)[1]
-    cache = app_settings.THUMBNAILS_DIR / f"libposter_{job_id}.jpg"
+    width = thumb_scale.normalize_width(w)
+    immutable = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+    # An image needs no frame extraction — scale it straight into the cache.
+    # The copy lands in THUMBNAILS_DIR, not beside the user's asset, so
+    # `drop_poster_cache` remains the single place that cleans up after it.
+    if src.suffix.lower() in _POSTER_IMAGE_SUFFIXES:
+        dest = app_settings.THUMBNAILS_DIR / f"{stem}{thumb_scale.output_suffix(src)}"
+        served = await thumb_scale.scaled_into(src, dest, width or thumb_scale.DEFAULT_WIDTH)
+        return FileResponse(served, media_type=thumb_scale.media_type(served), headers=immutable)
+
+    cache = app_settings.THUMBNAILS_DIR / f"{stem}.jpg"
+    failed = app_settings.THUMBNAILS_DIR / f"{stem}.fail"
+    try:
+        src_mtime = src.stat().st_mtime
+    except OSError:
+        raise HTTPException(status_code=404, detail="Could not read the source file")
+    # A source replaced since the frame was taken (re-rendered in place) gets a
+    # fresh frame; an unchanged one that already failed is not retried.
+    if cache.is_file() and cache.stat().st_mtime < src_mtime:
+        cache.unlink(missing_ok=True)
     if not cache.is_file():
-        produced = await extract_thumbnail(src, cache, POSTER_SEEK_SECONDS)
+        if failed.is_file() and failed.stat().st_mtime >= src_mtime:
+            raise HTTPException(status_code=404, detail="Could not extract a poster")
+        produced = await extract_frame_at(src, POSTER_SEEK_SECONDS, cache)
         if produced is None or not cache.is_file():
             # A clip SHORTER than the seek yields zero frames and ffmpeg exits
             # non-zero — ordinary for GIF sources and quick transforms. Retry
             # from the first frame before giving up.
-            produced = await extract_thumbnail(src, cache, 0.0)
+            produced = await extract_frame_at(src, 0.0, cache)
         if produced is None or not cache.is_file():
+            try:
+                failed.parent.mkdir(parents=True, exist_ok=True)
+                failed.touch()
+            except OSError:  # pragma: no cover — the marker is an optimisation
+                pass
             raise HTTPException(status_code=404, detail="Could not extract a poster")
-    return FileResponse(
-        cache,
-        media_type="image/jpeg",
-        # Content-addressed by job id and never regenerated, so it can be cached
-        # hard — the grid asks for one per edited video, on every paint.
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
+        failed.unlink(missing_ok=True)
+    # Extracted at the video's own resolution — downscale for the grid.
+    cache = await thumb_scale.scaled_thumbnail(cache, width)
+    return FileResponse(cache, media_type="image/jpeg", headers=immutable)
 
 
 async def resolve_asset_path(job_id: str, db: AsyncSession) -> Path:
@@ -261,15 +299,10 @@ async def stream_track(filename: str, request: Request):
 
 
 def _drop_poster_cache(job_id: str) -> None:
-    """Remove the extracted poster for a deleted job asset.
-
-    Keyed `libposter_<job_id>.jpg`; without this, every deleted edited video
-    leaves an orphaned JPEG behind forever."""
-    from backend.config import settings as app_settings
-    try:
-        (app_settings.THUMBNAILS_DIR / f"libposter_{job_id}.jpg").unlink(missing_ok=True)
-    except OSError:  # pragma: no cover — cache cleanup is best-effort
-        logger.warning("Could not remove poster cache for job %s", job_id)
+    """Remove the extracted poster (and its scaled copies) for a deleted job
+    asset. Without this, every deleted edited video leaves orphaned JPEGs
+    behind forever."""
+    library_index.drop_poster_cache(f"{library_index.KEY_JOB}:{job_id}")
 
 
 def _unlink_job_output(job: Job) -> None:

@@ -150,11 +150,16 @@ DOWNLOADED_PRODUCER_KEYS = ("download", "import")
 # download is exactly what that panel is for) and nowhere in the Library.
 # Listed here so `classify()` returning None is a decision on record rather
 # than an oversight — the difference between the two is the invisibility bug.
+#
+# Every entry is a job type this variant actually creates — a test reads the
+# `create_job("…")` literals out of backend/ and fails on a stale or hosted-only
+# name, the same way it fails on an emitted type that is listed nowhere.
 NON_LIBRARY_JOB_TYPES = frozenset({
-    "scout", "news_scout", "news_save", "analyze", "channel_analysis",
-    "generate",          # registers a generated_videos row, which IS the item
-    "extract_clips",     # ditto, one row per clip
-    "motion_render",     # ditto
+    "scout", "news_scout", "news_save", "analyze",
+    "generate",          # registers a generated_videos row (a render, or one
+                         # per clip for a Clipper run), which IS the item
+    "batch_generate",    # parent of N `generate` children; each child's row is
+    "motion_render",     # registers a generated_videos row, which IS the item
     "motion_compose",    # authors a composition, renders nothing
     "upload",            # publishes an existing video, produces no new file
     "tool:hook_analysis",  # structured text on the job row, no file

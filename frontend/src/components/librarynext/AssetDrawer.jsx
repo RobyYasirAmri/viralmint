@@ -34,8 +34,9 @@ import useAppStore from "../../store/appStore"
 import GeneratedDetail from "../videos/GeneratedDetail"
 import DownloadedDetail from "../videos/DownloadedDetail"
 import {
-  ORIGINS, originColor, fmtDayLong, fmtSize, waveformBars, MEDIA,
+  ORIGINS, originColor, fmtDayLong, fmtSize, fmtScore, waveformBars, MEDIA,
 } from "./assetModel"
+import { buttonProps, insetFocusRing } from "./a11y"
 import { formatClock } from "../../utils/format"
 import { OriginBadge } from "./SourceTree"
 
@@ -97,8 +98,8 @@ export default function AssetDrawer({
       ["Platform", item.platform],
       ["Genre", item.genre],
       ["Niche", item.niche],
-      ["Hook score", item.hook_score != null ? `${item.hook_score} / 10` : null],
-      ["Virality", item.virality_score != null ? `${item.virality_score} / 10` : null],
+      ["Hook score", item.hook_score != null ? fmtScore(item.hook_score) : null],
+      ["Virality", item.virality_score != null ? fmtScore(item.virality_score) : null],
     ]
     return rows.filter(([, v]) => v != null && v !== "")
   }, [item])
@@ -234,7 +235,7 @@ export default function AssetDrawer({
                       sx={{ position: "absolute", bottom: 10, left: 12, width: "calc(100% - 24px)" }} />
                   </>
                 ) : (
-                  <Typography sx={{ fontSize: "0.78rem", color: "text.disabled", px: 3, textAlign: "center" }}>
+                  <Typography sx={{ fontSize: "0.78rem", color: "text.secondary", px: 3, textAlign: "center" }}>
                     {item.ext === "zip"
                       ? "Archive — save a copy to open it"
                       : "Text file — save a copy to read it"}
@@ -271,6 +272,7 @@ export default function AssetDrawer({
                 ) : detail ? (
                   item.source === "generated" ? (
                     <GeneratedDetail
+                      embedded
                       video={detail}
                       onDelete={handleDelete}
                       onDetailUpdate={(updated) => setDetail(updated)}
@@ -282,6 +284,7 @@ export default function AssetDrawer({
                     />
                   ) : (
                     <DownloadedDetail
+                      embedded
                       video={detail}
                       onDetailUpdate={(updated) => setDetail(updated)}
                       onUseAsInspiration={handleUseAsInspiration}
@@ -305,7 +308,7 @@ export default function AssetDrawer({
                     }}>
                       <Typography sx={{
                         width: 108, flexShrink: 0, fontSize: "0.7rem", fontWeight: 700,
-                        letterSpacing: "0.05em", textTransform: "uppercase", color: "text.disabled",
+                        letterSpacing: "0.05em", textTransform: "uppercase", color: "text.secondary",
                       }}>
                         {k}
                       </Typography>
@@ -374,7 +377,7 @@ function SectionLabel({ children }) {
   return (
     <Typography sx={{
       fontSize: "0.64rem", fontWeight: 700, letterSpacing: "0.09em",
-      textTransform: "uppercase", color: "text.disabled", mt: 0.5,
+      textTransform: "uppercase", color: "text.secondary", mt: 0.5,
     }}>
       {children}
     </Typography>
@@ -386,10 +389,11 @@ function LineageRow({ item, icon, onOpen }) {
   const oc = originColor(item.origin, theme.palette.mode === "dark")
   return (
     <Stack direction="row" spacing={1} alignItems="center"
-      onClick={() => onOpen?.(item)}
+      {...buttonProps(() => onOpen?.(item), { label: `Open ${item.title}` })}
+      data-testid="lineage-row"
       sx={{
         p: 1, borderRadius: "10px", cursor: "pointer", border: 1, borderColor: "divider",
-        "&:hover": { bgcolor: "action.hover", borderColor: alpha(oc, 0.4) },
+        "&:hover": { bgcolor: "action.hover", borderColor: alpha(oc, 0.4) }, ...insetFocusRing,
       }}>
       <Box sx={{ color: oc, display: "flex" }}>{icon}</Box>
       <Box sx={{
@@ -397,7 +401,7 @@ function LineageRow({ item, icon, onOpen }) {
         bgcolor: alpha(oc, 0.12),
       }}>
         {item.thumb_url && (
-          <Box component="img" src={item.thumb_url} alt=""
+          <Box component="img" src={item.thumb_url} alt="" loading="lazy" decoding="async"
             sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
         )}
       </Box>

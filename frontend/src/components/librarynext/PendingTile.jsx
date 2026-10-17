@@ -17,16 +17,19 @@
  * flight reads as a tile still developing rather than a different object.
  */
 import { Box, Typography, Stack, LinearProgress, Button, alpha, useTheme } from "@mui/material"
-import { ORIGINS, originColor } from "./assetModel"
+import { ORIGINS, originColor, originTextColor } from "./assetModel"
 
 export default function PendingTile({ job, dense = false, onCancel }) {
   const theme = useTheme()
   const isDark = theme.palette.mode === "dark"
   const oc = originColor(job.origin, isDark)
+  // Words in the readable step-down; bar, rail and dot keep the brand hue.
+  const ocText = originTextColor(job.origin, isDark)
   const frameH = dense ? 112 : 148
 
   return (
-    <Box sx={{
+    <Box data-testid="pending-tile" aria-label={`${job.label} — ${job.percent ? `${job.percent}%` : "starting"}`}
+      role="group" sx={{
       position: "relative", borderRadius: "14px", overflow: "hidden",
       bgcolor: "background.paper", border: 1, borderColor: alpha(oc, 0.35),
       boxShadow: theme.customShadows?.sm,
@@ -43,7 +46,7 @@ export default function PendingTile({ job, dense = false, onCancel }) {
       }}>
         <Stack alignItems="center" spacing={0.75} sx={{ width: "72%" }}>
           <Typography sx={{
-            fontSize: "0.72rem", fontWeight: 700, color: oc,
+            fontSize: "0.72rem", fontWeight: 700, color: ocText,
             fontVariantNumeric: "tabular-nums",
           }}>
             {job.percent ? `${job.percent}%` : "Starting…"}
@@ -91,7 +94,7 @@ export default function PendingTile({ job, dense = false, onCancel }) {
           }} />
           <Typography sx={{
             fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.07em",
-            textTransform: "uppercase", color: oc,
+            textTransform: "uppercase", color: ocText,
           }}>
             {ORIGINS[job.origin]?.label}
           </Typography>

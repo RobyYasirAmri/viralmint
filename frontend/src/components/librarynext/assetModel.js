@@ -187,9 +187,25 @@ export function fmtDayLong(iso) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
 }
 
+/** File size from the index's `size_mb`. Below half a megabyte the MB form
+ *  rounded to "0 MB" — a subtitle file or a thumbnail read as empty — so small
+ *  files get KB (never "0 KB": anything that exists is at least 1 KB). */
 export function fmtSize(mb) {
-  if (mb == null) return null
-  return mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
+  if (mb == null || Number.isNaN(Number(mb))) return null
+  const n = Number(mb)
+  if (n >= 1000) return `${(n / 1024).toFixed(1)} GB`
+  if (n >= 10) return `${Math.round(n)} MB`
+  if (n >= 0.5) return `${n.toFixed(1).replace(/\.0$/, "")} MB`
+  return `${Math.max(1, Math.round(n * 1024))} KB`
+}
+
+/** A 0–10 score in ONE shape everywhere — tile pill, tree row, drawer facts:
+ *  "7.5/10", "8/10". The tile used to say "⚡8" while the drawer said
+ *  "7.5/10" for a different metric, and nothing said which was which. */
+export function fmtScore(v) {
+  if (v == null || Number.isNaN(Number(v))) return ""
+  const n = Number(v)
+  return `${Number.isInteger(n) ? n : n.toFixed(1)}/10`
 }
 
 /** Deterministic pseudo-random 0..1 from a string — drives the audio waveform
@@ -227,9 +243,8 @@ export const JOB_ONLY_LABELS = {
   news_scout: "News scout",
   news_save: "Saved article",
   analyze: "Analysis",
-  channel_analysis: "Channel analysis",
   generate: "Stock Video",
-  extract_clips: "Clipper",
+  batch_generate: "Batch videos",
   motion_render: "Motion render",
   motion_compose: "AI Compose",
   upload: "Upload",
@@ -250,9 +265,8 @@ export const JOB_ONLY_LABELS = {
 const RENDER_JOB_TYPES = {
   generate: { media: "video", origin: "created" },
   motion_render: { media: "video", origin: "created" },
-  // Clip extraction registers one generated_videos row per clip, so a running
-  // one is work that WILL land in the grid.
-  extract_clips: { media: "video", origin: "edited" },
+  // A Clipper run is job_type "generate" too — told apart by its input in
+  // activityFromJob, which files it as edited.
 }
 
 const JOB_STATE = {
@@ -264,6 +278,17 @@ const JOB_STATE = {
   // Its own state, NOT "failed": a deliberate cancel in the red failure strip
   // and "Needs attention" reads as the app breaking on the user's own choice.
   cancelled: "cancelled",
+}
+
+// The Clipper's picker modes, in the words its UI uses — "ai" and "manual" are
+// wire values and read as jargon in a list of the user's own runs.
+const CLIP_MODE_WORDS = { ai: "AI picks", manual: "your ranges" }
+
+/** Last-resort label for a job type nobody mapped: `tool:foo_bar` → "Foo bar".
+ *  Better than printing the raw key; the drift tests still flag it. */
+function humanizeJobType(t) {
+  const s = String(t || "").replace(/^tool:/, "").replace(/[_-]+/g, " ").trim()
+  return s ? s[0].toUpperCase() + s.slice(1) : "Job"
 }
 
 const _trunc = (s, n = 80) => {
@@ -309,10 +334,11 @@ export function jobDetail(job, input) {
     return ""
   }
   if (t === "generate") {
-    if (p.type === "clip_extraction") {
+    if (p.type === "clip_extraction" || p.type === "clip_suggestion") {
       const bits = []
       if (p.max_clips) bits.push(`up to ${p.max_clips} clips`)
-      if (p.mode && p.mode !== "auto") bits.push(String(p.mode))
+      const mode = p.type === "clip_suggestion" ? "ai" : p.mode
+      if (mode && mode !== "auto") bits.push(CLIP_MODE_WORDS[mode] || String(mode))
       return bits.join(" · ")
     }
     if (p.topic) return _trunc(p.topic)
@@ -367,7 +393,7 @@ export function activityFromJob(job) {
     if (out?.generated_video_id) resultKey = `gv:${out.generated_video_id}`
     else if (out?.file && !p.unmapped) resultKey = `job:${job.id}`
   } catch { /* malformed output_json — no result link, nothing else breaks */ }
-  let label = JOB_ONLY_LABELS[norm] || p?.label || job.job_type
+  let label = JOB_ONLY_LABELS[norm] || (p.unmapped ? humanizeJobType(norm) : p.label)
   // Render jobs land in the Library even though the JOB type doesn't classify
   // (the generated_videos row each one registers is the library item).
   let bound = norm in RENDER_JOB_TYPES || (!p.unmapped && !(norm in JOB_ONLY_LABELS))
@@ -379,6 +405,13 @@ export function activityFromJob(job) {
     p = classify("clip_extraction") || p
     label = p?.label || "Clipper"
     bound = true
+  }
+  // "Ask AI" on the bench PROPOSES ranges — nothing is cut, no file lands, so
+  // it earns no pending tile and must not read as a Stock Video render.
+  if (norm === "generate" && input?.type === "clip_suggestion") {
+    p = { ...(classify("clip_extraction") || p) }
+    label = "Clip suggestions"
+    bound = false
   }
   // Headline precedence matches the old Jobs tab: the stored title, else what
   // the input says it's working on, else the type label — `where` keeps the

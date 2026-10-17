@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom"
 import useWebSocket from "../hooks/useWebSocket"
-import useJobs from "../hooks/useJobs"
+import useJobs, { mapActivity } from "../hooks/useJobs"
 import http from "../api/http"
 import ActivityPanel from "./librarynext/ActivityPanel"
 import { activityFromJob } from "./librarynext/assetModel"
@@ -72,7 +72,7 @@ export default function Layout() {
   // these", and computing either over a 20-row window would quietly lie the
   // moment a user had more.
   const { jobs: allJobs, jobTotal, fetchJobs } = useJobs(5000, 200)
-  const activity = useMemo(() => allJobs.map(activityFromJob), [allJobs])
+  const activity = useMemo(() => mapActivity(allJobs, activityFromJob), [allJobs])
   // The poll backs off when nothing is in flight, but the WebSocket knows about
   // a new job immediately (job_started → activeJobs). Without this nudge, a run
   // you just started could be missing from Activity long enough to read as

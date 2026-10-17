@@ -13,7 +13,7 @@
  * page 7 of an old result set is a guaranteed empty grid that reads as a bug.
  */
 import {
-  Box, Stack, Typography, Pagination, Select, MenuItem, useMediaQuery, useTheme,
+  Stack, Typography, Pagination, Select, MenuItem, Link, useMediaQuery, useTheme,
 } from "@mui/material"
 import { PAGE_SIZES } from "../../hooks/useLibraryIndex"
 
@@ -46,7 +46,7 @@ export default function LibraryPager({
 
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap"
         justifyContent="center">
-        <Typography sx={{ fontSize: "0.75rem", color: "text.disabled" }}>
+        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
           {total === 0
             ? `No ${unit}`
             : `${first}–${last} of ${total} ${unit}`}
@@ -54,18 +54,20 @@ export default function LibraryPager({
         </Typography>
 
         {filtersActive && (
-          <Typography component="span" onClick={onClearFilters}
-            sx={{
-              fontSize: "0.75rem", color: "primary.main", cursor: "pointer",
-              fontWeight: 600,
-            }}>
-            clear filters
-          </Typography>
+          // A real <button> (Link renders one with component="button"): the
+          // clickable <span> it replaces had no tab stop and no Enter.
+          // Text colour + underline rather than brand terracotta: primary.main
+          // is 3.7:1 on the canvas, under the 4.5:1 floor at this size.
+          <Link component="button" type="button" onClick={onClearFilters} underline="always"
+            color="text.primary"
+            sx={{ fontSize: "0.75rem", fontWeight: 600, verticalAlign: "baseline", textUnderlineOffset: "2px" }}>
+            Clear filters
+          </Link>
         )}
 
         {total > PAGE_SIZES[0] && (
           <Stack direction="row" spacing={0.75} alignItems="center">
-            <Typography sx={{ fontSize: "0.75rem", color: "text.disabled" }}>
+            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
               per page
             </Typography>
             <Select

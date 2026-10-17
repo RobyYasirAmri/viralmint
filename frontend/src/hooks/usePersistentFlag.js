@@ -6,12 +6,9 @@ import { readRaw, writeRaw } from "../utils/storage"
 /**
  * A boolean UI preference that survives a reload.
  *
- * Collapses the "read localStorage in a lazy initialiser, write it in an
- * effect, wrap both in try/catch because private mode throws" block that
- * ClipStudio and Merge Clips each carried a copy of — with the two keys
- * (`clipstudio_filmstrip_collapsed`, `mergeclips_filmstrip_collapsed`) being
- * the only two in the whole app with no `vm` prefix, so a "clear ViralMint
- * state" sweep matching on `vm` left them behind (2026-08-17 audit, D2).
+ * The "read localStorage in a lazy initialiser, write it in an effect, wrap
+ * both in try/catch because private mode throws" block, once. Build the key
+ * with storageKey(scope, name) so it sits under the app's `vm.` prefix.
  *
  * @param {string} key         Canonical key — build it with storageKey(scope, name).
  * @param {boolean} [initial]  Value when nothing is stored.

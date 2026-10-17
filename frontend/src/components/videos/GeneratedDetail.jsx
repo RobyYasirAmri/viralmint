@@ -26,7 +26,11 @@ const EXPORT_FORMATS = [
   { aspect: "4:5",  label: "4:5 Portrait", desc: "Instagram Feed" },
 ]
 
-export default function GeneratedDetail({ video, onUpload, onDelete, onClose, onDetailUpdate }) {
+// `embedded` — rendered inside the Library drawer, whose header already
+// shows the title, origin, duration and date and has its own close button.
+// The body then drops its own card frame, title and close, and stacks into
+// one column at the drawer's width instead of a page-width two-column grid.
+export default function GeneratedDetail({ video, onUpload, onDelete, onClose, onDetailUpdate, embedded = false }) {
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [regenThumb, setRegenThumb] = useState(false)
@@ -115,7 +119,12 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
   return (
     <Paper
       elevation={0}
-      sx={{
+      data-testid={"generated-detail"}
+      // Embedded, the drawer IS the card: a second 2 px bordered card inside it
+      // drew a hard frame around the whole body (harshest in dark mode).
+      sx={embedded ? {
+        p: 0, bgcolor: "transparent", border: 0, borderRadius: 0,
+      } : {
         mx: -0.5, mb: 1.5, p: 0,
         border: 2, borderColor: "secondary.main",
         borderRadius: 3,
@@ -125,11 +134,15 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
     >
       {/* Header bar */}
       <Stack direction="row" alignItems="center" justifyContent="space-between"
-        sx={{ px: 2.5, py: 1.5, bgcolor: "action.hover" }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
-          {video.title || "Untitled"}
-        </Typography>
-        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+        sx={embedded ? { pb: 1.5 } : { px: 2.5, py: 1.5, bgcolor: "action.hover" }}>
+        {!embedded && (
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
+            {video.title || "Untitled"}
+          </Typography>
+        )}
+        <Stack direction="row" spacing={embedded ? 0 : 1} useFlexGap
+          flexWrap={embedded ? "wrap" : "nowrap"}
+          sx={embedded ? { gap: 1, flex: 1, minWidth: 0, alignItems: "center" } : { flexShrink: 0 }}>
           <Chip label={video.status} size="small" color={STATUS_COLOR[video.status] || "default"} />
           {editing ? (
             <>
@@ -195,14 +208,18 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
             </>
           )}
         </Stack>
-        <IconButton size="small" onClick={onClose} sx={{ ml: 1 }}><CloseIcon fontSize="small" /></IconButton>
+        {!embedded && (
+          <IconButton size="small" onClick={onClose} sx={{ ml: 1 }} aria-label="Close">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        )}
       </Stack>
 
       {/* Main content */}
-      <Box sx={{ p: 2.5 }}>
+      <Box sx={{ p: embedded ? 0 : 2.5 }}>
         <Grid container spacing={3}>
           {/* Left column: Video player + meta chips */}
-          <Grid size={{ xs: 12, md: 4 }}>
+          <Grid size={{ xs: 12, md: embedded ? 12 : 4 }}>
             {video.video_path ? (
               <Box
                 component="video"
@@ -227,14 +244,14 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
                 size="small" variant={video.source_type === "clip_extraction" ? "filled" : "outlined"}
                 color={video.source_type === "clip_extraction" ? "secondary" : "default"}
                 icon={video.source_type === "clip_extraction" ? <ContentCutIcon /> : undefined} />
-              <Chip label={video.aspect_ratio} size="small" variant="outlined" />
-              {video.duration_seconds && (
+              {!embedded && video.aspect_ratio && <Chip label={video.aspect_ratio} size="small" variant="outlined" />}
+              {!embedded && video.duration_seconds && (
                 <Chip icon={<AccessTimeIcon />} label={`${Math.floor(video.duration_seconds / 60)}m${video.duration_seconds % 60}s`}
                   size="small" variant="outlined" />
               )}
               {video.clip_virality_score != null && (
                 <Chip icon={<WhatshotIcon />}
-                  label={`${video.clip_virality_score.toFixed(1)}/10`}
+                  label={`Virality ${video.clip_virality_score.toFixed(1)}/10`}
                   size="small" variant="filled"
                   color={video.clip_virality_score >= 8 ? "success" : video.clip_virality_score >= 6 ? "warning" : "default"} />
               )}
@@ -247,7 +264,7 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
               {video.estimated_cost_usd > 0 && (
                 <Chip label={`$${video.estimated_cost_usd.toFixed(2)}`} size="small" variant="outlined" />
               )}
-              {video.created_at && (
+              {!embedded && video.created_at && (
                 <Typography variant="caption" sx={{ color: "text.secondary", alignSelf: "center" }}>
                   {new Date(video.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 </Typography>
@@ -277,7 +294,7 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
           </Grid>
 
           {/* Right column: Script + Platform metadata (editable) */}
-          <Grid size={{ xs: 12, md: 8 }}>
+          <Grid size={{ xs: 12, md: embedded ? 12 : 8 }}>
             {editing ? (
               <Stack spacing={2}>
                 <TextField label="Title" size="small" fullWidth

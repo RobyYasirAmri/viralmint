@@ -324,11 +324,7 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    # Clean up files — the same set the bulk delete removes.
-    for path_str in _video_files(video):
-        p = Path(path_str)
-        if p.exists():
-            p.unlink(missing_ok=True)
+    _drop_video_files(video)
 
     await db.delete(video)
     await db.commit()
@@ -348,6 +344,27 @@ def _video_files(video: GeneratedVideo) -> list[str]:
     removes (the cached 16:9 export is the one that used to be forgotten)."""
     return [p for p in (video.video_path, video.audio_path, video.thumbnail_path,
                         getattr(video, "video_path_landscape", None)) if p]
+
+
+def _drop_video_files(video: GeneratedVideo) -> None:
+    """Remove every file a generated-video row owns, for the single and the
+    bulk delete alike: the files in _video_files, the thumbnail's scaled grid
+    copies (thumb_scale) and the Library's extracted poster. A file that can't
+    be removed is logged, never fatal — it must not strand the rest."""
+    from backend.services.library_index import KEY_GENERATED, drop_poster_cache
+    from backend.services.thumb_scale import scaled_siblings
+    for path_str in _video_files(video):
+        try:
+            Path(path_str).unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("delete: could not remove %s: %s", path_str, e)
+    if video.thumbnail_path:
+        for sib in scaled_siblings(Path(video.thumbnail_path)):
+            try:
+                sib.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("delete: could not remove %s: %s", sib, e)
+    drop_poster_cache(f"{KEY_GENERATED}:{video.id}")
 
 
 def _sanitize_filename(name: str, max_len: int = 60) -> str:
@@ -407,11 +424,7 @@ async def bulk_delete_videos(body: dict = None, db: AsyncSession = Depends(get_d
     if not videos:
         raise HTTPException(status_code=404, detail="No matching clips found")
     for video in videos:
-        for path_str in _video_files(video):
-            try:
-                Path(path_str).unlink(missing_ok=True)
-            except OSError as e:  # a locked file must not strand the rest
-                logger.warning("bulk-delete: could not remove %s: %s", path_str, e)
+        _drop_video_files(video)
         await db.delete(video)
     await db.commit()
     return {"ok": True, "deleted": len(videos)}
@@ -654,9 +667,34 @@ async def optimal_posting_time(platform: str = Query("youtube")):
     return await recommend_posting_time(platform=platform)
 
 
+def thumbnail_cache_headers(versioned: bool) -> dict[str, str]:
+    """Cache policy for a thumbnail response.
+
+    With `?v=<mtime>` in the URL (the Library index stamps it) the response can
+    be cached forever: a regenerated thumbnail has a new mtime, hence a new URL.
+    Without it the browser revalidated on every scroll-into-view, so a long
+    grid reloaded its cards as you scrolled.
+    """
+    if versioned:
+        return {"Cache-Control": "public, max-age=31536000, immutable"}
+    return {"Cache-Control": "public, max-age=60, must-revalidate"}
+
+
 @router.get("/videos/{video_id}/thumbnail")
-async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db)):
-    """Serve the thumbnail image."""
+async def get_thumbnail(
+    video_id: str,
+    v: str | None = Query(None, description="Cache-busting version (the file's mtime)"),
+    w: int | None = Query(None, description="Grid width — see thumb_scale.ALLOWED_WIDTHS"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the thumbnail image.
+
+    `?w=` serves a downscaled copy. The stored thumbnail is as large as the
+    render (1920x1080 for a 16:9 output): cheap on the wire, but ~7.9 MB of
+    BITMAP once decoded, and a Library page draws dozens of them into 140px
+    boxes. The browser cannot hold that, so it evicts and re-decodes on scroll —
+    which is what made tiles go black and fill back in.
+    """
     result = await db.execute(
         select(GeneratedVideo).where(GeneratedVideo.id == video_id)
     )
@@ -668,7 +706,12 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db)):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail file not found on disk")
 
-    return FileResponse(path, media_type="image/jpeg")
+    from backend.services import thumb_scale
+    path = await thumb_scale.scaled_thumbnail(path, thumb_scale.normalize_width(w))
+    # Typed from the file actually served: a scaled copy keeps PNG when its
+    # source has alpha.
+    return FileResponse(path, media_type=thumb_scale.media_type(path),
+                        headers=thumbnail_cache_headers(bool(v)))
 
 
 # NOTE: a second `@router.post("/videos/{video_id}/export")` handler

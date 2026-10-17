@@ -20,6 +20,7 @@ import NewspaperIcon from "@mui/icons-material/Newspaper"
 import http from "../../api/http"
 import useAppStore from "../../store/appStore"
 import { WHISPER_QUALITIES } from "./constants"
+import { fmtSize } from "../librarynext/assetModel"
 
 function InsightRow({ label, color, value }) {
   return (
@@ -57,7 +58,11 @@ function AIActionButton({ label, icon, loading, onClick, tooltip }) {
   )
 }
 
-export default function DownloadedDetail({ video, onUseAsInspiration, onClose, onDetailUpdate }) {
+// `embedded` — rendered inside the Library drawer, whose header already
+// shows the title, origin, duration and date and has its own close button.
+// The body then drops its own card frame, title and close, and stacks into
+// one column at the drawer's width instead of a page-width two-column grid.
+export default function DownloadedDetail({ video, onUseAsInspiration, onClose, onDetailUpdate, embedded = false }) {
   const [reanalyzeAnchor, setReanalyzeAnchor] = useState(null)
   const [reanalyzing, setReanalyzing] = useState(false)
   const [aiActionLoading, setAiActionLoading] = useState(null)
@@ -131,7 +136,12 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
   return (
     <Paper
       elevation={0}
-      sx={{
+      data-testid={"downloaded-detail"}
+      // Embedded, the drawer IS the card: a second 2 px bordered card inside it
+      // drew a hard frame around the whole body (harshest in dark mode).
+      sx={embedded ? {
+        p: 0, bgcolor: "transparent", border: 0, borderRadius: 0,
+      } : {
         mx: -0.5, mb: 1.5, p: 0,
         border: 2, borderColor: "secondary.main",
         borderRadius: 3,
@@ -141,11 +151,15 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
     >
       {/* Header bar */}
       <Stack direction="row" alignItems="center" justifyContent="space-between"
-        sx={{ px: 2.5, py: 1.5, bgcolor: "action.hover" }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
-          {video.title || "Untitled"}
-        </Typography>
-        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+        sx={embedded ? { pb: 1.5 } : { px: 2.5, py: 1.5, bgcolor: "action.hover" }}>
+        {!embedded && (
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
+            {video.title || "Untitled"}
+          </Typography>
+        )}
+        <Stack direction="row" spacing={embedded ? 0 : 1} useFlexGap
+          flexWrap={embedded ? "wrap" : "nowrap"}
+          sx={embedded ? { gap: 1, flex: 1, minWidth: 0, alignItems: "center" } : { flexShrink: 0 }}>
           {video.platform !== "news" && (
             <>
               <Button variant="outlined" size="small"
@@ -188,14 +202,18 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
             {video.platform === "news" ? "Create Video from Article" : "Use as Inspiration"}
           </Button>
         </Stack>
-        <IconButton size="small" onClick={onClose} sx={{ ml: 1 }}><CloseIcon fontSize="small" /></IconButton>
+        {!embedded && (
+          <IconButton size="small" onClick={onClose} sx={{ ml: 1 }} aria-label="Close">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        )}
       </Stack>
 
       {/* Main content */}
-      <Box sx={{ p: 2.5 }}>
+      <Box sx={{ p: embedded ? 0 : 2.5 }}>
         <Grid container spacing={3}>
           {/* Left column: Video player + meta chips */}
-          <Grid size={{ xs: 12, md: 4 }}>
+          <Grid size={{ xs: 12, md: embedded ? 12 : 4 }}>
             {video.video_path ? (
               <Box
                 component="video"
@@ -272,12 +290,12 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
 
             {/* Meta chips */}
             <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
-              {video.platform !== "news" && video.duration_seconds && (
+              {!embedded && video.platform !== "news" && video.duration_seconds && (
                 <Chip icon={<AccessTimeIcon />} label={`${Math.floor(video.duration_seconds / 60)}m${video.duration_seconds % 60}s`}
                   size="small" variant="outlined" />
               )}
               {video.platform !== "news" && video.file_size_mb && (
-                <Chip icon={<StorageIcon />} label={`${video.file_size_mb} MB`} size="small" variant="outlined" />
+                <Chip icon={<StorageIcon />} label={fmtSize(video.file_size_mb)} size="small" variant="outlined" />
               )}
               <Chip
                 label={video.platform === "news"
@@ -286,7 +304,7 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
                 size="small"
                 color={video.insights ? "success" : video.transcript ? "warning" : "default"}
               />
-              {video.created_at && (
+              {!embedded && video.created_at && (
                 <Typography variant="caption" sx={{ color: "text.secondary", alignSelf: "center" }}>
                   {new Date(video.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 </Typography>
@@ -295,7 +313,7 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
           </Grid>
 
           {/* Right column: AI Insights + Transcript */}
-          <Grid size={{ xs: 12, md: 8 }}>
+          <Grid size={{ xs: 12, md: embedded ? 12 : 8 }}>
             {video.insights ? (<>
               <Typography variant="overline" sx={{ color: "text.secondary", mb: 1, display: "block" }}>AI Insights</Typography>
               <Stack spacing={1.5}>

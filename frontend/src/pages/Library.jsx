@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   Box, Typography, Stack, TextField, Button, Chip, IconButton,
-  Tooltip, Menu, MenuItem, CircularProgress, alpha, useTheme,
+  Menu, MenuItem, CircularProgress, LinearProgress, alpha, useTheme, useMediaQuery,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from "@mui/material"
 import SearchIcon from "@mui/icons-material/Search"
@@ -26,9 +26,7 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded"
 import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded"
 import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded"
 import InventoryRoundedIcon from "@mui/icons-material/Inventory2Rounded"
-import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded"
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded"
-import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded"
 import LightbulbRoundedIcon from "@mui/icons-material/LightbulbRounded"
 import BoltRoundedIcon from "@mui/icons-material/BoltRounded"
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded"
@@ -38,13 +36,16 @@ import useDocumentTitle from "../hooks/useDocumentTitle"
 import useAppStore from "../store/appStore"
 import useLibraryIndex, { PAGE_SIZES, DEFAULT_PAGE_SIZE } from "../hooks/useLibraryIndex"
 import useConfirm from "../hooks/useConfirm"
+import { mapActivity } from "../hooks/useJobs"
+import usePersistentFlag from "../hooks/usePersistentFlag"
+import { storageKey } from "../utils/storage"
 import LibraryPager from "../components/librarynext/LibraryPager"
 import FacetBar from "../components/librarynext/FacetBar"
 import AssetTile from "../components/librarynext/AssetTile"
 import SourceTree from "../components/librarynext/SourceTree"
 import AssetDrawer from "../components/librarynext/AssetDrawer"
 import PendingTile from "../components/librarynext/PendingTile"
-import { MEDIA, ORIGINS, originColor, originTextColor, activityFromJob } from "../components/librarynext/assetModel"
+import { MEDIA, ORIGINS, originTextColor, activityFromJob } from "../components/librarynext/assetModel"
 
 // NOTE: there is no "Use in…" hand-off here. Every tool page takes an UPLOAD —
 // no endpoint in this variant accepts a library reference — so a button that
@@ -71,6 +72,44 @@ const LEGACY_TAB_FILTERS = {
   generated: { origin: "created" },
   audio: { media: "audio" },
   music: { media: "audio" },
+}
+
+/** A visible keyboard ring for the header / strip buttons. The theme's global
+ *  :focus-visible ring loses to MuiButton's own `boxShadow: none`, so Import,
+ *  Activity and Review showed no focus at all. An outline can't be overridden
+ *  by a shadow rule. */
+const focusRing = (color = "primary.main") => ({
+  "&.Mui-focusVisible": { outline: "2px solid", outlineColor: color, outlineOffset: "2px" },
+})
+
+/** Where the explainer's dismissal is remembered. */
+export const WHY_DISMISSED_KEY = storageKey("library", "whyDismissed")
+
+/** Arrow-key movement across a CSS grid of tiles, by what's on screen: the
+ *  column count is read from the rendered rows (auto-fill decides it, not us).
+ *  Returns the index to focus, or null when the key isn't a grid move. */
+export function nextTileIndex(key, index, count, columns) {
+  if (count === 0) return null
+  const cols = Math.max(1, columns)
+  let next
+  switch (key) {
+    case "ArrowRight": next = index + 1; break
+    case "ArrowLeft": next = index - 1; break
+    case "ArrowDown": next = index + cols; break
+    case "ArrowUp": next = index - cols; break
+    case "Home": next = 0; break
+    case "End": next = count - 1; break
+    default: return null
+  }
+  return Math.min(count - 1, Math.max(0, next))
+}
+
+/** True until the first load settles, then false for good — so only the very
+ *  first fetch blanks the grid. */
+export function useInitialLoading(loading) {
+  const [settled, setSettled] = useState(!loading)
+  useEffect(() => { if (!loading) setSettled(true) }, [loading])
+  return loading && !settled
 }
 
 /** Every key a family tree renders, so the page can dim what the current
@@ -102,7 +141,13 @@ export default function Library() {
   const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1)
   const pageSize = PAGE_SIZES.includes(Number(params.get("per")))
     ? Number(params.get("per")) : DEFAULT_PAGE_SIZE
-  const [dense, setDense] = useState(false)
+  // In the URL like every other view setting, so a reload or a shared link
+  // keeps it (it used to reset to comfortable on every visit).
+  const dense = params.get("dense") === "1"
+  const narrow = useMediaQuery(theme.breakpoints.down("sm"))
+  // Not a provenance colour: the Library's own accent must not read as one of
+  // the three origins (the old #0097a7 was a near-twin of "Sources" teal).
+  const accent = theme.palette.info.main
 
   /** Write one filter, dropping it from the URL when it returns to default. */
   const setParam = useCallback((key, value, dflt) => {
@@ -133,13 +178,15 @@ export default function Library() {
   const setQ = (v) => setFilterParam("q", v, "")
   const setPage = (v) => setParam("page", v > 1 ? String(v) : "", "")
   const setPageSize = (v) => setFilterParam("per", v === DEFAULT_PAGE_SIZE ? "" : String(v), "")
+  const setDense = (v) => setParam("dense", v ? "1" : "", "")
   // key → ITEM, not a Set of keys: selection survives page and filter changes,
   // so bulk actions must be able to resolve every selected item — resolving
   // against the current page silently dropped anything selected on another one.
   const [selected, setSelected] = useState(() => new Map())
   const [drawerItem, setDrawerItem] = useState(null)
   const [drawerLineage, setDrawerLineage] = useState({ ancestors: [], children: [] })
-  const [showWhy, setShowWhy] = useState(true)
+  const [whyDismissed, setWhyDismissed] = usePersistentFlag(WHY_DISMISSED_KEY, false)
+  const importRef = useRef(null)
   const [moreMenu, setMoreMenu] = useState(null)
   const openActivity = useAppStore((s) => s.openActivity)
   const [importing, setImporting] = useState(false)
@@ -150,11 +197,18 @@ export default function Library() {
     families, loners, familyTotal, matchedKeys, familiesLoading,
     removeLocal, refresh,
   } = useLibraryIndex({ media, origins, producer, q, sort, view, page, pageSize })
+  // What the visible view is waiting on: the tree never shows the items page.
+  const viewLoading = view === "tree" ? familiesLoading : loading
+  // Full-page spinner on the FIRST load only. Every later refetch — a search
+  // keystroke, a filter chip, a delete, a job landing — keeps the tiles already
+  // on screen and shows a slim bar instead; blanking the grid to a spinner each
+  // time made the page flash and lose the user's place.
+  const initialLoading = useInitialLoading(loading)
 
   // Jobs are polled once in Layout (which also owns the Activity panel); this
   // page reads the same store rather than starting a second poll.
   const jobs = useAppStore((s) => s.jobs)
-  const activity = useMemo(() => jobs.map(activityFromJob), [jobs])
+  const activity = useMemo(() => mapActivity(jobs, activityFromJob), [jobs])
   const runningCount = activity.filter((a) => a.state === "running").length
 
   // Work in flight sits in the grid it will land in. Only jobs the current
@@ -196,12 +250,38 @@ export default function Library() {
     setFilterParam("origin", next.join(","), "")
   }
 
-  const toggleSelect = (item) =>
+  // Stable, so memoised tiles skip re-rendering when nothing about them changed.
+  const toggleSelect = useCallback((item) =>
     setSelected((prev) => {
       const next = new Map(prev)
       next.has(item.key) ? next.delete(item.key) : next.set(item.key, item)
       return next
-    })
+    }), [])
+
+  // Anchor to the tile, not the hover-only button: the button unmounts the
+  // moment hover leaves, and MUI then logs an invalid-anchor error and snaps
+  // the menu to the corner.
+  const tileAnchor = (e) => e.currentTarget.closest('[data-testid="asset-tile"]') || e.currentTarget
+  const openMoreMenu = useCallback((it, e) => setMoreMenu({ anchor: tileAnchor(e), item: it }), [])
+
+  // Roving tabIndex: the grid is one tab stop, the last-focused tile holds it.
+  const [focusKey, setFocusKey] = useState(null)
+  const rovingKey = items.some((i) => i.key === focusKey) ? focusKey : items[0]?.key
+  const gridRef = useRef(null)
+  const onGridKeyDown = useCallback((e) => {
+    const tile = e.target
+    if (tile?.dataset?.testid !== "asset-tile") return
+    const tiles = [...(gridRef.current?.querySelectorAll('[data-testid="asset-tile"]') || [])]
+    const index = tiles.indexOf(tile)
+    if (index < 0) return
+    // Columns = tiles sharing the first tile's row. auto-fill decides it.
+    const top = tiles[0].offsetTop
+    const columns = tiles.filter((t) => t.offsetTop === top).length
+    const next = nextTileIndex(e.key, index, tiles.length, columns)
+    if (next == null) return
+    e.preventDefault()
+    tiles[next].focus()
+  }, [])
 
   const clearFilters = () => setParams(new URLSearchParams(), { replace: true })
 
@@ -449,11 +529,12 @@ export default function Library() {
             // itself as soon as you picked a media tab.
             : `${libraryTotal} items`
         }
-        accentColor="#0097a7"
+        accentColor={accent}
         actions={
           <Stack direction="row" spacing={1} alignItems="center">
             <TextField
-              placeholder="Search library…"
+              // The long form was cut to "Search libr" in the 140 px phone box.
+              placeholder={narrow ? "Search…" : "Search library…"}
               size="small"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -461,17 +542,23 @@ export default function Library() {
                 input: {
                   startAdornment: <SearchIcon sx={{ mr: 0.5, fontSize: 18, color: "text.secondary" }} />,
                 },
+                htmlInput: { "aria-label": "Search library" },
               }}
               sx={{ width: { xs: 140, sm: 250 } }}
             />
-            {/* A real file input behind the label — the first cut carried the
-                button over without one, so clicking it did nothing. */}
-            <Button size="small" variant="outlined" component="label"
+            {/* A real <button> driving a hidden file input. It was a
+                <label component>, which is not focusable: Import could not be
+                reached from the keyboard at all. */}
+            <input ref={importRef} type="file" hidden accept={IMPORT_ACCEPT} onChange={handleImport}
+              data-testid="library-import-input" />
+            <Button size="small" variant="outlined"
+              onClick={() => importRef.current?.click()}
+              sx={focusRing()}
               disabled={importing} startIcon={<FileUploadRoundedIcon />}>
               {importing ? "Importing…" : "Import"}
-              <input type="file" hidden accept={IMPORT_ACCEPT} onChange={handleImport} />
             </Button>
             <Button size="small" variant="outlined" onClick={openActivity}
+              sx={focusRing()}
               startIcon={<BoltRoundedIcon sx={{ fontSize: 17 }} />}>
               Activity
               {(runningCount > 0 || recentFailures.length > 0) && (
@@ -508,30 +595,30 @@ export default function Library() {
       </Box>
 
       {/* Content */}
-      <Box ref={scrollRef} sx={{
+      <Box sx={{ position: "relative", flexShrink: 0, height: 0, zIndex: 2 }}>
+        {viewLoading && !initialLoading && (
+          <LinearProgress data-testid="library-refetching" aria-label="Updating library"
+            sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 2 }} />
+        )}
+      </Box>
+      <Box ref={scrollRef} aria-busy={viewLoading || undefined} sx={{
         flex: 1, overflow: "auto", px: { xs: 2, md: 3 },
         pt: 2.5, pb: selected.size ? 9 : 2.5,
       }}>
-        {showWhy && (
-          <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{
-            mb: 2.5, px: 1.5, py: 1.1, borderRadius: "12px",
-            border: 1, borderColor: alpha("#0097a7", 0.3),
-            bgcolor: alpha("#0097a7", theme.palette.mode === "dark" ? 0.1 : 0.06),
+        {/* One line, and it stays dismissed. It used to be a paragraph on every
+            visit. */}
+        {!whyDismissed && (
+          <Stack direction="row" spacing={1} alignItems="center" data-testid="library-why" sx={{
+            mb: 2.5, pl: 1.5, pr: 0.5, py: 0.5, borderRadius: "12px",
+            border: 1, borderColor: alpha(accent, 0.3),
+            bgcolor: alpha(accent, theme.palette.mode === "dark" ? 0.1 : 0.05),
           }}>
-            <LightbulbRoundedIcon sx={{ fontSize: 17, color: "#0097a7", mt: "1px" }} />
-            <Typography sx={{ flex: 1, fontSize: "0.78rem", color: "text.secondary", lineHeight: 1.65 }}>
-              <strong>Two questions, two controls.</strong> The tabs say what a file <em>is</em>; the
-              From chips say where it <em>came from</em>. A downloaded mp3 is Audio + Sources, a
-              voice-over is Audio + Created, an enhanced podcast is Audio + Edited — all three live
-              in Audio, and none of them needs a tab of its own. Switch to
-              <strong> By source</strong> to see each download with everything you made from it.
-              <br />
-              Scout results are deliberately not here — a lead is not a file you own, so it has its
-              own page. Jobs split in two: work in flight appears as a tile in the grid where it will
-              land, and the full log lives in <strong>Activity</strong> (top right), reachable from
-              every page instead of only this one.
+            <LightbulbRoundedIcon sx={{ fontSize: 16, color: accent, flexShrink: 0 }} />
+            <Typography sx={{ flex: 1, fontSize: "0.78rem", color: "text.secondary", lineHeight: 1.5 }}>
+              Tabs say what a file <strong>is</strong>; the From chips say where it <strong>came from</strong>.
+              {" "}<strong>By source</strong> groups each download with everything you made from it.
             </Typography>
-            <IconButton size="small" onClick={() => setShowWhy(false)} aria-label="Dismiss">
+            <IconButton size="small" onClick={() => setWhyDismissed(true)} aria-label="Dismiss tip">
               <CloseRoundedIcon sx={{ fontSize: 15 }} />
             </IconButton>
           </Stack>
@@ -571,13 +658,14 @@ export default function Library() {
               in the last day — nothing was added to your library.
             </Typography>
             <Button size="small" variant="outlined" color="error"
+              sx={focusRing("error.main")}
               onClick={openActivity}>
               Review
             </Button>
           </Stack>
         )}
 
-        {loading ? (
+        {initialLoading ? (
           <Stack alignItems="center" sx={{ py: 10 }}>
             <CircularProgress size={26} thickness={5} />
           </Stack>
@@ -620,7 +708,7 @@ export default function Library() {
           </Stack>
         ) : (
           <>
-            <Box sx={{
+            <Box ref={gridRef} onKeyDown={onGridKeyDown} sx={{
               display: "grid", gap: dense ? 1.25 : 1.75,
               gridTemplateColumns: `repeat(auto-fill, minmax(${dense ? 168 : 202}px, 1fr))`,
             }}>
@@ -635,12 +723,11 @@ export default function Library() {
                   dense={dense}
                   selected={selected.has(item.key)}
                   anySelected={selected.size > 0}
+                  tabIndex={item.key === rovingKey ? 0 : -1}
                   onOpen={openItem}
                   onToggleSelect={toggleSelect}
-                  onMore={(it, e) => setMoreMenu({
-                    anchor: e.currentTarget.closest('[data-testid="asset-tile"]') || e.currentTarget,
-                    item: it,
-                  })}
+                  onMore={openMoreMenu}
+                  onFocusTile={setFocusKey}
                 />
               ))}
             </Box>
