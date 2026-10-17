@@ -22,7 +22,8 @@ import ImageRoundedIcon from "@mui/icons-material/ImageRounded"
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded"
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded"
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded"
-import { ORIGINS, originColor, originTextColor, fmtDay } from "./assetModel"
+import { ORIGINS, originColor, originTextColor, fmtDay, fmtScore } from "./assetModel"
+import { buttonProps, insetFocusRing } from "./a11y"
 import { formatClock } from "../../utils/format"
 
 const MEDIA_ICON = {
@@ -44,8 +45,11 @@ export default function SourceTree({ families, loners, onOpen, dimmedIds }) {
       {loners.length > 0 && (
         <Box sx={{ mt: 0.5 }}>
           <Stack direction="row" alignItems="center" spacing={0.75}
-            onClick={() => setShowLoners((v) => !v)}
-            sx={{ cursor: "pointer", py: 1, color: "text.secondary", "&:hover": { color: "text.primary" } }}>
+            {...buttonProps(() => setShowLoners((v) => !v), { expanded: showLoners })}
+            sx={{
+              cursor: "pointer", py: 1, px: 0.5, mx: -0.5, borderRadius: "8px", width: "fit-content",
+              color: "text.secondary", "&:hover": { color: "text.primary" }, ...insetFocusRing,
+            }}>
             <ExpandMoreRoundedIcon sx={{
               fontSize: 18,
               transform: showLoners ? "none" : "rotate(-90deg)",
@@ -54,7 +58,7 @@ export default function SourceTree({ families, loners, onOpen, dimmedIds }) {
             <Typography sx={{ fontSize: "0.78rem", fontWeight: 600 }}>
               Nothing made from these yet
             </Typography>
-            <Typography sx={{ fontSize: "0.74rem", color: "text.disabled", fontVariantNumeric: "tabular-nums" }}>
+            <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
               {loners.length}
             </Typography>
           </Stack>
@@ -92,10 +96,10 @@ function Family({ root, nodes, onOpen, dimmedIds }) {
 
       {/* Root */}
       <Stack direction="row" spacing={1.5} alignItems="center"
-        onClick={() => onOpen?.(root)}
+        {...buttonProps(() => onOpen?.(root), { label: root.title })}
         sx={{
           pl: 2, pr: 1.5, py: 1.25, cursor: "pointer", opacity: dimmed ? 0.45 : 1,
-          "&:hover": { bgcolor: "action.hover" },
+          "&:hover": { bgcolor: "action.hover" }, ...insetFocusRing,
         }}>
         <Box sx={{
           width: 96, height: 54, borderRadius: "8px", flexShrink: 0, overflow: "hidden",
@@ -103,7 +107,7 @@ function Family({ root, nodes, onOpen, dimmedIds }) {
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           {root.thumb_url
-            ? <Box component="img" src={root.thumb_url} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ? <Box component="img" src={root.thumb_url} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
             : <RootIcon sx={{ fontSize: 20, color: alpha(oc, 0.6) }} />}
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -119,7 +123,7 @@ function Family({ root, nodes, onOpen, dimmedIds }) {
           </Stack>
         </Box>
         <Typography sx={{
-          flexShrink: 0, fontSize: "0.7rem", fontWeight: 700, color: alpha(oc, 0.9),
+          flexShrink: 0, fontSize: "0.7rem", fontWeight: 700, color: originTextColor(root.origin, isDark),
           fontVariantNumeric: "tabular-nums",
         }}>
           {count} derived
@@ -155,11 +159,11 @@ function ChildRow({ item, onOpen, dimmed }) {
 
   return (
     <Stack direction="row" alignItems="center" spacing={1}
-      onClick={() => onOpen?.(item)}
+      {...buttonProps(() => onOpen?.(item), { label: item.title })}
       sx={{
         py: 0.55, pl: 1, pr: 1, borderRadius: "8px", cursor: "pointer",
         position: "relative", opacity: dimmed ? 0.4 : 1,
-        "&:hover": { bgcolor: "action.hover" },
+        "&:hover": { bgcolor: "action.hover" }, ...insetFocusRing,
         // tick joining the row to its parent's spine
         "&::before": {
           content: '""', position: "absolute", left: -14, top: "50%",
@@ -172,7 +176,7 @@ function ChildRow({ item, onOpen, dimmed }) {
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
         {item.thumb_url
-          ? <Box component="img" src={item.thumb_url} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ? <Box component="img" src={item.thumb_url} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
           : <Icon sx={{ fontSize: 13, color: alpha(oc, 0.7) }} />}
       </Box>
       <Typography noWrap sx={{ fontSize: "0.78rem", fontWeight: 500, maxWidth: 420 }}>
@@ -181,9 +185,9 @@ function ChildRow({ item, onOpen, dimmed }) {
       <OriginBadge origin={item.origin} />
       <Meta>{item.producer}</Meta>
       {item.duration_seconds != null && <><Dot /><Meta>{formatClock(item.duration_seconds)}</Meta></>}
-      {item.hook_score != null && <><Dot /><Meta>hook {item.hook_score}</Meta></>}
+      {item.hook_score != null && <><Dot /><Meta>Hook {fmtScore(item.hook_score)}</Meta></>}
       <Box sx={{ flex: 1 }} />
-      <Meta sx={{ color: "text.disabled" }}>{fmtDay(item.created_at)}</Meta>
+      <Meta>{fmtDay(item.created_at)}</Meta>
     </Stack>
   )
 }
@@ -195,12 +199,12 @@ function LonerRow({ item, onOpen, dimmed }) {
   const Icon = MEDIA_ICON[item.media]
   return (
     <Stack direction="row" alignItems="center" spacing={1}
-      onClick={() => onOpen?.(item)}
+      {...buttonProps(() => onOpen?.(item), { label: item.title })}
       sx={{
         py: 0.6, px: 1, borderRadius: "10px", cursor: "pointer", minWidth: 0,
         border: 1, borderColor: "divider", bgcolor: "background.paper",
         opacity: dimmed ? 0.45 : 1,
-        "&:hover": { bgcolor: "action.hover", borderColor: alpha(oc, 0.4) },
+        "&:hover": { bgcolor: "action.hover", borderColor: alpha(oc, 0.4) }, ...insetFocusRing,
       }}>
       <Box sx={{ width: 3, alignSelf: "stretch", borderRadius: 2, bgcolor: oc, opacity: 0.85, flexShrink: 0 }} />
       <Box sx={{
@@ -208,7 +212,7 @@ function LonerRow({ item, onOpen, dimmed }) {
         bgcolor: alpha(oc, isDark ? 0.18 : 0.09), display: "flex", alignItems: "center", justifyContent: "center",
       }}>
         {item.thumb_url
-          ? <Box component="img" src={item.thumb_url} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ? <Box component="img" src={item.thumb_url} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
           : <Icon sx={{ fontSize: 12, color: alpha(oc, 0.7) }} />}
       </Box>
       <Typography noWrap sx={{ fontSize: "0.76rem", fontWeight: 500, flex: 1, minWidth: 0 }}>
@@ -225,15 +229,17 @@ function countNodes(nodes) {
 
 export function OriginBadge({ origin, size = "sm" }) {
   const theme = useTheme()
-  const oc = originColor(origin, theme.palette.mode === "dark")
+  const isDark = theme.palette.mode === "dark"
+  const oc = originColor(origin, isDark)
   return (
-    <Tooltip title={ORIGINS[origin]?.hint || ""} enterDelay={500}>
+    <Tooltip title={ORIGINS[origin]?.hint || ""} enterDelay={500} describeChild>
       <Stack direction="row" alignItems="center" spacing={0.4} sx={{ flexShrink: 0 }}>
         <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: oc }} />
         <Typography sx={{
           fontSize: size === "sm" ? "0.6rem" : "0.68rem", fontWeight: 700,
-          letterSpacing: "0.07em", textTransform: "uppercase",
-          color: originTextColor(origin, theme.palette.mode === "dark"),
+          // Text takes the readable step-down; the dot keeps the brand colour
+          // (the tile footer's rule — 3.4:1 is fine for a dot, not a word).
+          letterSpacing: "0.07em", textTransform: "uppercase", color: originTextColor(origin, isDark),
         }}>
           {ORIGINS[origin]?.label}
         </Typography>
@@ -246,5 +252,5 @@ function Meta({ children, sx }) {
   return <Typography noWrap sx={{ fontSize: "0.7rem", color: "text.secondary", flexShrink: 0, ...sx }}>{children}</Typography>
 }
 function Dot() {
-  return <Typography sx={{ fontSize: "0.7rem", color: "text.disabled", flexShrink: 0 }}>·</Typography>
+  return <Typography aria-hidden sx={{ fontSize: "0.7rem", color: "text.secondary", flexShrink: 0 }}>·</Typography>
 }

@@ -86,3 +86,28 @@ export default function useJobs(pollInterval = 5000, pageSize = 20) {
 
   return { jobs, jobTotal, fetchJobs }
 }
+
+// activityFromJob JSON.parses input_json + output_json per row; mapping 200
+// rows on every store change re-parsed all of them. Cache per row, keyed on
+// the fields the row's display can depend on, so only rows that changed are
+// re-derived.
+const _activityCache = new Map()  // id -> { sig, value, fn }
+function rowSig(j) {
+  return [j.status, j.progress_pct, j.current_step, j.title, j.error_message,
+    j.started_at, j.completed_at, j.job_type,
+    j.input_json?.length ?? -1, j.output_json?.length ?? -1].join("\u0001")
+}
+export function mapActivity(jobs, toActivity) {
+  const seen = new Set()
+  const out = jobs.map((j) => {
+    seen.add(j.id)
+    const sig = rowSig(j)
+    const hit = _activityCache.get(j.id)
+    if (hit && hit.sig === sig && hit.fn === toActivity) return hit.value
+    const value = toActivity(j)
+    _activityCache.set(j.id, { sig, value, fn: toActivity })
+    return value
+  })
+  for (const id of _activityCache.keys()) if (!seen.has(id)) _activityCache.delete(id)
+  return out
+}

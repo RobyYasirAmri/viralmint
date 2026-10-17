@@ -255,6 +255,11 @@ function ExpandableError({ message }) {
   return (
     <Typography
       onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
+      role="button" tabIndex={0} aria-expanded={open}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return
+        e.preventDefault(); e.stopPropagation(); setOpen((v) => !v)
+      }}
       title={open ? "" : "Click to expand"}
       sx={{
         mt: 0.75, fontSize: "0.72rem", color: "error.main", cursor: "pointer",

@@ -15,3 +15,23 @@ export function storageKey(scope, name) {
   if (!scope || !name) throw new Error("storageKey(scope, name): both required")
   return `vm.${scope}.${name}`
 }
+
+/** Read a raw string value. Returns `fallback` when storage is unavailable
+ *  (private mode, blocked site data) — the accessor can throw. */
+export function readRaw(key, fallback = null) {
+  try {
+    return localStorage.getItem(key) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** Write a raw string value. Silently no-ops when storage is unavailable. */
+export function writeRaw(key, value) {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}

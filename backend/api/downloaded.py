@@ -260,6 +260,17 @@ async def delete_downloaded(video_id: str):
         # for them again once the source was gone. (The boot sweep is the
         # backstop for what a crash leaves behind, not a licence to leak here.)
         drop_bench_caches(video_id)
+        # Same rule for the Library's poster cache and the thumbnail's scaled
+        # grid copies.
+        from backend.services.library_index import KEY_DOWNLOADED, drop_poster_cache
+        from backend.services.thumb_scale import scaled_siblings
+        drop_poster_cache(f"{KEY_DOWNLOADED}:{video_id}")
+        if video.thumbnail_path:
+            for sib in scaled_siblings(Path(video.thumbnail_path)):
+                try:
+                    sib.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         # Delete associated scout result
         if video.scout_result_id:
@@ -1423,11 +1434,14 @@ async def ai_action(video_id: str, body: dict = None):
 
 
 @router.get("/downloaded/{video_id}/thumbnail")
-async def get_downloaded_thumbnail(video_id: str):
+async def get_downloaded_thumbnail(video_id: str, v: str | None = Query(None),
+                                   w: int | None = Query(None)):
     """Serve the thumbnail for a downloaded video.
 
     Falls back to extracting one from the video file (ffmpeg) if thumbnail_path
     isn't set, then backfills the DB so we don't re-extract next time.
+    `?v=<mtime>` makes it cacheable forever and `?w=` serves a grid-sized copy —
+    see videos.get_thumbnail.
     """
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -1441,7 +1455,11 @@ async def get_downloaded_thumbnail(video_id: str):
     if video.thumbnail_path:
         thumb = Path(video.thumbnail_path)
         if thumb.exists():
-            return FileResponse(thumb, media_type="image/jpeg")
+            from backend.api.videos import thumbnail_cache_headers
+            from backend.services import thumb_scale
+            thumb = await thumb_scale.scaled_thumbnail(thumb, thumb_scale.normalize_width(w))
+            return FileResponse(thumb, media_type=thumb_scale.media_type(thumb),
+                                headers=thumbnail_cache_headers(bool(v)))
 
     # No thumbnail yet — extract one from the video file.
     video_file = video.video_path

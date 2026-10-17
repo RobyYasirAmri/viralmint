@@ -43,10 +43,18 @@ from backend.models.generated_video import GeneratedVideo, NICHE_MAX_CHARS
 from backend.models.job import Job
 from backend.services.library_taxonomy import (
     MEDIA_AUDIO,
+    MEDIA_IMAGE,
     MEDIA_ORDER,
+    MEDIA_VIDEO,
     ORIGIN_ORDER,
     classify,
 )
+
+# Tiles draw at ~140 CSS px; this is the retina-safe width the index asks for.
+# Serving the stored full-size thumbnail instead cost ~7.9 MB of DECODED bitmap
+# per tile, which the browser evicted and re-decoded on scroll — the "tile goes
+# black, then fills in" flicker.
+from backend.services.thumb_scale import DEFAULT_WIDTH as GRID_THUMB_WIDTH
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +208,13 @@ async def _generated_items(db: AsyncSession) -> list[dict]:
             "title": v.title or v.youtube_title or "Untitled video",
             "thumb_url": (
                 f"/api/videos/{v.id}/thumbnail?v={_version(v.thumbnail_path)}"
-                if _exists(v.thumbnail_path) else None
+                f"&w={GRID_THUMB_WIDTH}"
+                if _exists(v.thumbnail_path)
+                else _frame_poster_url(KEY_GENERATED, v.id, v.video_path)
+            ),
+            "poster_failed": (
+                not _exists(v.thumbnail_path)
+                and _poster_failed(f"{KEY_GENERATED}:{v.id}", Path(v.video_path))
             ),
             "stream_url": f"/api/videos/{v.id}/stream",
             "aspect": v.aspect_ratio,
@@ -249,7 +263,14 @@ async def _downloaded_items(db: AsyncSession) -> list[dict]:
             "title": v.title or "Untitled",
             "thumb_url": (
                 f"/api/downloaded/{v.id}/thumbnail?v={_version(v.thumbnail_path)}"
-                if _exists(v.thumbnail_path) else None
+                f"&w={GRID_THUMB_WIDTH}"
+                if _exists(v.thumbnail_path)
+                else (_frame_poster_url(KEY_DOWNLOADED, v.id, v.video_path)
+                      if has_video else None)
+            ),
+            "poster_failed": (
+                has_video and not _exists(v.thumbnail_path)
+                and _poster_failed(f"{KEY_DOWNLOADED}:{v.id}", Path(v.video_path))
             ),
             "stream_url": f"/api/downloaded/{v.id}/stream",
             "aspect": None,
@@ -283,34 +304,60 @@ async def _job_items(db: AsyncSession) -> tuple[list[dict], set[str]]:
     items: list[dict] = []
     music_copies: set[str] = set()
     for j in rows:
-        out = _json_or_none(j.output_json)
-        if not out:
+        item, lib_name = _job_item(j)
+        if item is None:
             continue
-        file_str = out.get("file")
-        if not file_str or not _exists(file_str):
-            continue
-        # A clip job ALSO registers a GeneratedVideo row for the same file.
-        # That row is the richer record (aspect, scores, thumbnail), so the job
-        # copy is dropped here rather than double-counted.
-        if out.get("generated_video_id"):
-            continue
-        p = classify(j.job_type)
-        if p is None:
-            # scout / analyze / download / render jobs — activity, not a file
-            # the user picks. The taxonomy's NON_LIBRARY_JOB_TYPES records which
-            # types are deliberately here, so an unclassified NEW tool reads as
-            # the oversight it is rather than as a decision.
-            continue
-        lib_name = out.get("library_filename")
-        if isinstance(lib_name, str) and lib_name:
+        if lib_name:
             music_copies.add(lib_name)
-        path = Path(file_str)
-        suffix_media = _suffix_media(path.suffix)
-        inp = _json_or_none(j.input_json) or {}
-        duration = out.get("duration_seconds")
-        if duration is None:
-            duration = out.get("duration")
-        items.append({
+        items.append(item)
+    return items, music_copies
+
+
+def _job_item(j: Job) -> tuple[dict | None, str | None]:
+    """Project ONE job row into a library item, or (None, None) if it isn't one.
+
+    Split out of `_job_items` so a single-row lookup can apply the *same*
+    membership rules without projecting the whole library. Before the split the
+    poster endpoint ran a full `gather()` — a `stat()` per library file — on
+    every poster request, and a page of 48 tiles paid that 48 times over, all of
+    it to answer a question about one row.
+
+    Rewriting those rules per caller instead would be a second hand-maintained
+    copy, so every path shares this function.
+
+    Returns the item plus the `library_filename` a music-library copy declares,
+    which the caller uses to dedupe the track scan.
+    """
+    if j.status != "success":
+        return None, None
+    out = _json_or_none(j.output_json)
+    if not out:
+        return None, None
+    file_str = out.get("file")
+    if not file_str or not _exists(file_str):
+        return None, None
+    # A clip job ALSO registers a GeneratedVideo row for the same file.
+    # That row is the richer record (aspect, scores, thumbnail), so the job
+    # copy is dropped here rather than double-counted.
+    if out.get("generated_video_id"):
+        return None, None
+    p = classify(j.job_type)
+    if p is None:
+        # scout / analyze / download / render jobs — activity, not a file
+        # the user picks. The taxonomy's NON_LIBRARY_JOB_TYPES records which
+        # types are deliberately here, so an unclassified NEW tool reads as
+        # the oversight it is rather than as a decision.
+        return None, None
+    lib_name = out.get("library_filename")
+    lib_name = lib_name if isinstance(lib_name, str) and lib_name else None
+    path = Path(file_str)
+    suffix_media = _suffix_media(path.suffix)
+    inp = _json_or_none(j.input_json) or {}
+    duration = out.get("duration_seconds")
+    if duration is None:
+        duration = out.get("duration")
+    return (
+        {
             "key": f"{KEY_JOB}:{j.id}",
             "source": "job",
             "id": j.id,
@@ -336,6 +383,12 @@ async def _job_items(db: AsyncSession) -> tuple[list[dict], set[str]]:
             # or older builds point outside the storage root), and a failed
             # extraction isn't cached, so the miss repeated on every render.
             "thumb_url": _job_thumb_url(j.id, suffix_media or p.media, path),
+            # The poster endpoint already tried this file and ffmpeg could not
+            # read it: the tile says so in words without asking again.
+            "poster_failed": (
+                (suffix_media or p.media) == MEDIA_VIDEO
+                and _poster_failed(f"{KEY_JOB}:{j.id}", path)
+            ),
             "stream_url": f"/api/library/asset/{j.id}",
             "aspect": inp.get("aspect_ratio"),
             "duration_seconds": duration if isinstance(duration, (int, float)) else None,
@@ -354,23 +407,81 @@ async def _job_items(db: AsyncSession) -> tuple[list[dict], set[str]]:
             # generated_videos row instead).
             "parent_key": _resolve_parent(inp),
             "created_at": (j.completed_at or j.created_at).isoformat() if (j.completed_at or j.created_at) else None,
-        })
-    return items, music_copies
+        },
+        lib_name,
+    )
+
+
+# Formats the poster endpoint leaves alone. A GIF is NOT here: thumb_scale
+# rescales it frame by frame, so the tile keeps animating at a fraction of the
+# bytes. Animated WebP/APNG are, because Pillow's handling of them is a
+# different animal and a broken tile is worse than a heavy one.
+ANIMATED_SUFFIXES = {".webp", ".apng"}
 
 
 def _job_thumb_url(job_id: str, media: str, path: Path) -> str | None:
     """Where a job output's poster comes from.
 
-    An image IS its own poster. A video produced by a tool has no thumbnail
-    anywhere — nothing in the pipeline made one — so it points at the poster
-    endpoint, which extracts a frame on first request and caches it. Audio and
-    text have no poster; their tiles draw a waveform or a snippet instead.
+    Both images and videos go through the poster endpoint, which caches a
+    grid-sized copy under THUMBNAILS_DIR and serves it `immutable`. An image IS
+    its own poster, but a full-size PNG drawn into a ~200 px tile made the Image
+    tab transfer tens of MB per page; a tool video has no thumbnail anywhere, so
+    the endpoint extracts a frame on first request.
+
+    A file OUTSIDE the storage root gets no poster URL: the endpoint could not
+    read it, and emitting the URL anyway meant a guaranteed 404 on every render.
+    An image there still falls back to the raw asset. Audio and text have no
+    poster; their tiles draw a waveform or a snippet instead.
     """
-    if media == "image":
-        return f"/api/library/asset/{job_id}"
-    if media == "video" and _within_storage(path):
-        return f"/api/library/poster?key={KEY_JOB}:{job_id}"
+    if media == MEDIA_IMAGE:
+        if path.suffix.lower() in ANIMATED_SUFFIXES or not _within_storage(path):
+            return f"/api/library/asset/{job_id}"
+        return f"/api/library/poster?key={KEY_JOB}:{job_id}&w={GRID_THUMB_WIDTH}"
+    if media == MEDIA_VIDEO and _within_storage(path):
+        if _poster_failed(f"{KEY_JOB}:{job_id}", path):
+            return None
+        return f"/api/library/poster?key={KEY_JOB}:{job_id}&w={GRID_THUMB_WIDTH}"
     return None
+
+
+def _frame_poster_url(store: str, row_id: str, video_path: str | None) -> str | None:
+    """A poster for a generated video or a download that has no stored thumbnail.
+
+    An import, a download whose platform served no thumbnail, or a render whose
+    thumbnail step failed all used to reach the grid with `thumb_url: None` —
+    a tinted plate where a frame of the user's own video belonged. The poster
+    endpoint extracts one frame from the file (no DB write: a read must not
+    mutate) and caches it.
+
+    Same storage-root rule as `_job_thumb_url`: no URL for a file the endpoint
+    could not legally read.
+    """
+    if not video_path or not _within_storage(Path(video_path)):
+        return None
+    if _poster_failed(f"{store}:{row_id}", Path(video_path)):
+        return None
+    return f"/api/library/poster?key={store}:{row_id}&w={GRID_THUMB_WIDTH}"
+
+
+def _poster_failed(key: str, source: Path) -> bool:
+    """Has the poster endpoint already failed to read this file, unchanged since?
+
+    The endpoint leaves a `.fail` marker when ffmpeg cannot get a frame out of a
+    file. Emitting the poster URL again would only buy a 404 (and a console
+    error) on every page load, so the index drops the URL and flags the item;
+    the tile shows "Preview unavailable" without a request. A replaced file is
+    newer than its marker and gets a fresh attempt.
+    """
+    from backend.config import settings
+
+    stem = poster_cache_stem(key)
+    if stem is None:
+        return False
+    marker = settings.THUMBNAILS_DIR / f"{stem}.fail"
+    try:
+        return marker.stat().st_mtime >= source.stat().st_mtime
+    except OSError:
+        return False
 
 
 def _within_storage(path: Path) -> bool:
@@ -382,31 +493,24 @@ def _within_storage(path: Path) -> bool:
         return False
 
 
-async def resolve_job_video(db: AsyncSession, job_id: str) -> Path | None:
-    """On-disk video file for a tool-produced library item, or None.
+async def _job_file(db: AsyncSession, job_id: str, media: set[str]) -> Path | None:
+    """On-disk output file for a job item whose media is one of `media`.
 
-    The one place that answers "is this job id a video I own, and where is it".
-    Both the poster endpoint and the two id→path resolvers behind the tool
-    inputs (`_resolve_video_path`, `resolve_library_video_path`) go through it,
-    so a captioned cut is either usable everywhere or nowhere — the old split,
-    where edited videos existed on disk but no resolver could find them, is
-    exactly why they couldn't be fed back into a tool.
-
-    Resolution goes THROUGH the index, so only a file the library lists — and
-    only one inside STORAGE_ROOT — can ever come back.
+    Only a file the library LISTS — and only one inside STORAGE_ROOT — can ever
+    come back. That is one `db.get` through `_job_item`, which applies the
+    identical membership rules to that single row (same success filter, same
+    output/file/`generated_video_id` exclusions, same taxonomy classify), so a
+    row the index would omit still resolves to None here — without projecting
+    the whole library per request.
     """
-    all_items = await gather(db)
-    item = next(
-        (it for it in all_items
-         if it["source"] == "job" and it["id"] == job_id and it["media"] == "video"),
-        None,
-    )
-    if item is None:
+    job = await db.get(Job, job_id)
+    if job is None:
         return None
-    from backend.models.job import Job as _Job
-    job = await db.get(_Job, job_id)
-    out = _json_or_none(job.output_json) if job else None
-    file_str = out.get("file") if out else None
+    item, _lib_name = _job_item(job)
+    if item is None or item["media"] not in media:
+        return None
+    out = _json_or_none(job.output_json) or {}
+    file_str = out.get("file")
     if not file_str:
         return None
     from backend.api.videos import _safe_resolve_path
@@ -417,11 +521,108 @@ async def resolve_job_video(db: AsyncSession, job_id: str) -> Path | None:
     return path if path.is_file() else None
 
 
-async def poster_source(db: AsyncSession, key: str) -> Path | None:
-    """The video file a poster should be extracted from, or None."""
-    if not key.startswith(f"{KEY_JOB}:"):
+async def resolve_job_video(db: AsyncSession, job_id: str) -> Path | None:
+    """On-disk VIDEO file for a tool-produced library item, or None.
+
+    The one place that answers "is this job id a video I own, and where is it".
+    Deliberately video-only: widening it would make a GIF or a still a valid
+    answer to "which video".
+    """
+    return await _job_file(db, job_id, {MEDIA_VIDEO})
+
+
+async def _row_video(db: AsyncSession, store: str, row_id: str) -> Path | None:
+    """The video file behind a generated (`gv`) or downloaded (`dl`) row.
+
+    Same contract as `_job_file`: the row must be one the index lists (its
+    file present, classified), and the file must sit inside STORAGE_ROOT.
+    An audio-only download has no video and so no frame to show.
+    """
+    if store == KEY_GENERATED:
+        row = await db.get(GeneratedVideo, row_id)
+        if row is None or classify(row.source_type or "smart_video") is None:
+            return None
+        file_str = row.video_path
+    elif store == KEY_DOWNLOADED:
+        row = await db.get(DownloadedVideo, row_id)
+        file_str = row.video_path if row is not None else None
+    else:
         return None
-    return await resolve_job_video(db, key.split(":", 1)[1])
+    if not file_str or not _exists(file_str):
+        return None
+    from backend.api.videos import _safe_resolve_path
+    try:
+        path = _safe_resolve_path(file_str)
+    except Exception:  # noqa: BLE001 — traversal guard rejected it
+        return None
+    return path if path.is_file() else None
+
+
+async def poster_source(db: AsyncSession, key: str) -> Path | None:
+    """The file a poster is derived from — a video to grab a frame from, or an
+    image to downscale. None when the key names neither.
+
+    `job:` covers tool outputs (videos and images); `gv:` / `dl:` cover a
+    generated video or a download that has no stored thumbnail of its own.
+    """
+    store, _, row_id = (key or "").partition(":")
+    if not row_id:
+        return None
+    if store == KEY_JOB:
+        return await _job_file(db, row_id, {MEDIA_VIDEO, MEDIA_IMAGE})
+    if store in (KEY_GENERATED, KEY_DOWNLOADED):
+        return await _row_video(db, store, row_id)
+    return None
+
+
+# ── Poster cache ────────────────────────────────────────────────────────────
+# One extracted frame per item under THUMBNAILS_DIR. A job keeps its original
+# `libposter_<job_id>` name (caches written by earlier builds stay valid); a
+# generated video or a download is store-qualified so the two id spaces can't
+# collide.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def poster_cache_stem(key: str) -> str | None:
+    """`libposter_…` stem for an item key, or None for a key with no poster.
+
+    The id is checked against a strict charset even though it has already been
+    matched against a DB row: this string becomes a filename.
+    """
+    store, _, row_id = (key or "").partition(":")
+    if not _SAFE_ID.match(row_id or ""):
+        return None
+    if store == KEY_JOB:
+        return f"libposter_{row_id}"
+    if store in (KEY_GENERATED, KEY_DOWNLOADED):
+        return f"libposter_{store}_{row_id}"
+    return None
+
+
+def drop_poster_cache(key: str) -> None:
+    """Remove every cached poster file derived for `key`.
+
+    The frame, its scaled grid copies (`.w400.jpg` / `.png` / `.gif` — the
+    container depends on the source, so all are tried), and the failed-extraction
+    marker. Without this a deleted item leaves orphaned JPEGs behind forever.
+    Best-effort: cache cleanup never fails a delete.
+    """
+    from backend.config import settings
+    from backend.services.thumb_scale import scaled_siblings
+
+    stem = poster_cache_stem(key)
+    if stem is None:
+        return
+    base = settings.THUMBNAILS_DIR
+    images = [base / f"{stem}{suffix}" for suffix in (".jpg", ".png", ".gif")]
+    candidates = [*images, base / f"{stem}.fail"]
+    for img in images:
+        candidates.extend(scaled_siblings(img))
+    for c in candidates:
+        try:
+            c.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover — best effort
+            logger.warning("Could not remove poster cache %s", c)
 
 
 def _resolve_parent(inp: dict) -> str | None:

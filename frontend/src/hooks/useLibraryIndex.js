@@ -65,8 +65,6 @@ export default function useLibraryIndex({
   const [matchedKeys, setMatchedKeys] = useState(null)   // null = "everything matches"
   const [familiesLoading, setFamiliesLoading] = useState(false)
 
-  const [taxonomy, setTaxonomy] = useState(null)
-
   // Debounced needle so typing doesn't fire a request per keystroke.
   const [needle, setNeedle] = useState(q || "")
   useEffect(() => {
@@ -84,12 +82,20 @@ export default function useLibraryIndex({
   // (fast typing + a tab click race otherwise flip the grid back).
   const reqIdRef = useRef(0)
 
+  // In the tree view the grid isn't on screen, but the facet counts on the
+  // media tabs and From chips still are — and they only come back with an items
+  // query. So the tree asks for ONE row (the facets ride along) instead of a
+  // full grid page, and `page` there means a page of FAMILIES, so it must not
+  // leak into the items offset.
+  const itemsLimit = view === "tree" ? 1 : pageSize
+  const itemsOffset = view === "tree" ? 0 : (page - 1) * pageSize
+
   const fetchPage = useCallback(async () => {
     const reqId = ++reqIdRef.current
     setLoading(true)
     try {
       const { data } = await http.get("/api/library/items", {
-        params: { ...toParams(filters), limit: pageSize, offset: (page - 1) * pageSize },
+        params: { ...toParams(filters), limit: itemsLimit, offset: itemsOffset },
       })
       if (reqId !== reqIdRef.current) return          // superseded
       setItems(data.items || [])
@@ -105,7 +111,7 @@ export default function useLibraryIndex({
     } finally {
       if (reqId === reqIdRef.current) setLoading(false)
     }
-  }, [filters, page, pageSize, showSnackbar])
+  }, [filters, itemsLimit, itemsOffset, showSnackbar])
 
   // Same supersession guard as fetchPage — two quick filter toggles in tree
   // view could otherwise resolve out of order and leave the tree (and the
@@ -137,13 +143,9 @@ export default function useLibraryIndex({
   useEffect(() => { fetchPage() }, [fetchPage])
   useEffect(() => { if (view === "tree") fetchFamilies() }, [view, fetchFamilies])
 
-  useEffect(() => {
-    let alive = true
-    http.get("/api/library/taxonomy")
-      .then(({ data }) => { if (alive) setTaxonomy(data) })
-      .catch(() => { /* labels fall back to the local defaults */ })
-    return () => { alive = false }
-  }, [])
+  // No `/api/library/taxonomy` fetch here: labels come from assetModel.js (the
+  // frontend twin, drift-tested against the backend map), and the response was
+  // fetched on every visit and never read.
 
   const refresh = useCallback(() => {
     fetchPage()
@@ -163,7 +165,6 @@ export default function useLibraryIndex({
     items, total, libraryTotal, facets, loading, error,
     pageCount,
     families, loners, familyTotal, matchedKeys, familiesLoading,
-    taxonomy,
     refresh, removeLocal,
   }
 }

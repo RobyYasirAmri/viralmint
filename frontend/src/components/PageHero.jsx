@@ -80,16 +80,24 @@ export default function PageHero({
         },
       }}
     >
+      {/* Wraps on phones: the actions take their own full-width row under
+          the title instead of squeezing the title + subtitle into a narrow
+          column beside them (at 390px the Library's search box sat on top of
+          its own subtitle and the Activity button ran off the edge). */}
       <Stack
         direction="row"
-        spacing={1.5}
         alignItems="center"
+        flexWrap={{ xs: "wrap", sm: "nowrap" }}
+        useFlexGap
+        columnGap={1.5}
+        rowGap={1.25}
         sx={{ position: "relative", zIndex: 1 }}
       >
         {backTo && (
           <IconButton
             size="small"
             onClick={() => navigate(backTo)}
+            aria-label="Back"
             sx={{
               color: "text.secondary",
               "&:hover": { color: accent, bgcolor: alpha(accent, 0.08) },
@@ -152,7 +160,7 @@ export default function PageHero({
           )}
         </Box>
         {actions && (
-          <Box sx={{ flexShrink: 0 }}>
+          <Box sx={{ flexShrink: 0, width: { xs: "100%", sm: "auto" }, minWidth: 0 }}>
             {actions}
           </Box>
         )}
