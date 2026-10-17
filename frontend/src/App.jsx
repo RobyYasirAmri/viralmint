@@ -13,7 +13,6 @@ const Library = lazy(() => import("./pages/Library"))
 const Scout = lazy(() => import("./pages/Scout"))
 const StockVideo = lazy(() => import("./pages/StockVideo"))
 const Channels = lazy(() => import("./pages/Channels"))
-const Messaging = lazy(() => import("./pages/Messaging"))
 const ClipStudio = lazy(() => import("./pages/ClipStudio"))
 const MotionGraphics = lazy(() => import("./pages/MotionGraphics"))
 const Tools = lazy(() => import("./pages/Tools"))
@@ -132,7 +131,8 @@ export default function App() {
               <Route path="tools/metadata" element={<ToolMetadata />} />
               <Route path="tools/auto-chapters" element={<ToolAutoChapters />} />
               <Route path="channels" element={<Channels />} />
-              <Route path="messaging" element={<Messaging />} />
+              {/* Messaging moved into Settings; keep old bookmarks working. */}
+              <Route path="messaging" element={<Navigate to="/settings#messaging" replace />} />
               <Route path="settings" element={<Settings />} />
               {pluginRoutes.map(({ path, element }) => (
                 <Route key={path} path={path} element={element} />

@@ -17,7 +17,7 @@ callback wired by MessagingManager.set_planner_callback().
 
 Ownership: every workspace member can DM an installed app,
 and the old handshake re-bound to whoever DMed last and ran their text as the
-owner. Now the DM that sends the pairing code shown on the Messaging page becomes the
+owner. Now the DM that sends the pairing code shown in Settings → Messaging becomes the
 owner's channel; every other DM is ignored.
 """
 from __future__ import annotations

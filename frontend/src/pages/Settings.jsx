@@ -6,10 +6,12 @@ import MonitorHeartIcon from "@mui/icons-material/MonitorHeartOutlined"
 import KeyIcon from "@mui/icons-material/VpnKeyOutlined"
 import SmartToyIcon from "@mui/icons-material/SmartToyOutlined"
 import MovieFilterIcon from "@mui/icons-material/MovieFilterOutlined"
+import PhoneIphoneIcon from "@mui/icons-material/PhoneIphoneOutlined"
 import HealthDashboard from "../components/settings/HealthDashboard"
 import MotionGraphicsSection from "../components/settings/MotionGraphicsSection"
 import AIProviderSection from "../components/settings/AIProviderSection"
 import ServiceKeysSection from "../components/settings/ServiceKeysSection"
+import MessagingSection from "../components/settings/MessagingSection"
 import useSettings from "../hooks/useSettings"
 
 function Section({ icon, title, description, children, accentColor }) {
@@ -90,7 +92,7 @@ export default function Settings() {
               Settings
             </Typography>
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              Manage your AI provider and system health
+              Manage your AI provider, messaging apps and system health
             </Typography>
           </Box>
         </Stack>
@@ -117,6 +119,18 @@ export default function Settings() {
           accentColor="#2563eb"
         >
           <ServiceKeysSection settings={settings} updateSettings={updateSettings} />
+        </Section>
+
+        {/* Messaging — Telegram / WhatsApp / Discord / Slack. Was the /messaging
+            page; /messaging now redirects to /settings#messaging, and
+            ?messaging=<app> opens the setup dialog on that app's tab. */}
+        <Section
+          icon={<PhoneIphoneIcon sx={{ fontSize: 20 }} />}
+          title="Messaging"
+          description="Chat with ViralMint from your phone and get notified when a job finishes"
+          accentColor="#5865F2"
+        >
+          <MessagingSection />
         </Section>
 
         {/* Optional add-ons */}

@@ -18,7 +18,6 @@ import ChatIcon from "@mui/icons-material/ChatBubbleOutline"
 import VideoLibraryIcon from "@mui/icons-material/OndemandVideoOutlined"
 import PhotoLibraryIcon from "@mui/icons-material/PhotoLibraryOutlined"
 import SensorsIcon from "@mui/icons-material/SensorsOutlined"
-import PhoneIphoneIcon from "@mui/icons-material/PhoneIphoneOutlined"
 import ContentCutIcon from "@mui/icons-material/ContentCutOutlined"
 import MovieFilterIcon from "@mui/icons-material/MovieFilterOutlined"
 import BuildIcon from "@mui/icons-material/BuildOutlined"
@@ -38,7 +37,7 @@ const navItems = [
   { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Stock Video" },
   { to: "/motion",    icon: <MovieFilterIcon />,      label: "Motion Graphics" },
   { to: "/tools",     icon: <BuildIcon />,            label: "Tools" },
-  { to: "/messaging", icon: <PhoneIphoneIcon />,      label: "Messaging" },
+  // Messaging lives in Settings → Messaging (/messaging redirects there).
   { to: "/mcp",       icon: <HubIcon />,              label: "MCP" },
   ...pluginNavItems.filter(i => (i.position || "top") === "top"),
 ]

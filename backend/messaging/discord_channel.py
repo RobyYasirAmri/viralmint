@@ -18,7 +18,7 @@ Setup UX:
   1. Create a Discord application + bot at https://discord.com/developers/applications
   2. Copy the bot token, paste into ViralMint → Connect
   3. Add bot to a server via the invite URL we return, OR just start a DM
-  4. DM the bot the pairing code shown on the Messaging page — that Discord account
+  4. DM the bot the pairing code shown in Settings → Messaging — that Discord account
      becomes the owner. Until then the bot runs nothing; afterwards it answers
      only its owner's DMs (it used to bind whoever DMed
      last and run their text as the owner).
