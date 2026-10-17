@@ -31,7 +31,7 @@
 
 <img src="docs/screenshots/clipper-bench.webp" alt="ViralMint Clip Studio — a cutting bench with a filmstrip timeline, speech lane and pending cuts" width="900" />
 
-<sub><i>長尺動画を本物のタイムラインでショートに — 元動画のフレームをドラッグし、文の境界にスナップし、あるいは AI に提案させる。トレンド発掘・文字起こし・AI 動画・モーショングラフィックス・22の編集ツールまで、すべて同じアプリの中で動きます。</i></sub>
+<sub><i>長尺動画を本物のタイムラインでショートに — 元動画のフレームをドラッグし、文の境界にスナップし、あるいは AI に提案させる。トレンド発掘・文字起こし・台本からのストック映像動画生成・モーショングラフィックス・22の編集ツールまで、すべて同じアプリの中で動きます。</i></sub>
 
 </div>
 

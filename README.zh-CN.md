@@ -31,7 +31,7 @@
 
 <img src="docs/screenshots/clipper-bench.webp" alt="ViralMint Clip Studio — a cutting bench with a filmstrip timeline, speech lane and pending cuts" width="900" />
 
-<sub><i>在真正的时间轴上把长视频切成短视频——在它自己的帧上拖拽、吸附到句子边界，或者让 AI 先提议。发现选题、转写、AI 视频、动态图形与 22 个剪辑工具，全都在同一个应用里。</i></sub>
+<sub><i>在真正的时间轴上把长视频切成短视频——在它自己的帧上拖拽、吸附到句子边界，或者让 AI 先提议。发现选题、转写、脚本配素材成片、动态图形与 22 个剪辑工具，全都在同一个应用里。</i></sub>
 
 </div>
 

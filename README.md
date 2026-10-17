@@ -31,7 +31,7 @@ All on your machine. Bring your own API keys. No SaaS in the middle. No telemetr
 
 <img src="docs/screenshots/clipper-bench.webp" alt="ViralMint Clip Studio — a cutting bench with a filmstrip timeline, speech lane and pending cuts" width="900" />
 
-<sub><i>Cut a long video into shorts on a real timeline — drag across its own frames, snap to sentence boundaries, or let the AI propose the moments. Scouting, transcription, AI video, motion graphics and 22 editing tools all run from the same app.</i></sub>
+<sub><i>Cut a long video into shorts on a real timeline — drag across its own frames, snap to sentence boundaries, or let the AI propose the moments. Scouting, transcription, script-to-video on stock footage, motion graphics and 22 editing tools all run from the same app.</i></sub>
 
 </div>
 
