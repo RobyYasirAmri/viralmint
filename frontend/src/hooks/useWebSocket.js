@@ -3,6 +3,12 @@ import { ws } from "../api/websocket"
 import http from "../api/http"
 import useAppStore from "../store/appStore"
 
+// Smart Video Studio job types (backend/core/tasks/studio.py: studio_plan,
+// studio_voice, …). They are editor housekeeping: the Activity panel tracks
+// them and the open editor shows their result, so the chat transcript gets no
+// card for each. The render is job type `generate` and keeps the regular path.
+export const isStudioJob = (jobType) => typeof jobType === "string" && jobType.startsWith("studio_")
+
 export default function useWebSocket() {
   const {
     setStreaming,
@@ -172,8 +178,16 @@ export default function useWebSocket() {
         })
       }),
 
+      // Smart Video Studio: a job moved a project (voice take, plan, render).
+      // The open editor listens and refetches that project.
+      ws.on("studio_project_updated", (msg) => {
+        if (!msg?.project_id) return
+        window.dispatchEvent(new CustomEvent("vm:studio-updated", { detail: msg }))
+      }),
+
       ws.on("job_started", (msg) => {
         startJob(msg.job_id, msg.job_type, msg.message, { inputData: msg.input_data || null })
+        if (isStudioJob(msg.job_type)) return
         addMessage({
           role: "rich",
           type: "job_progress",
@@ -189,6 +203,7 @@ export default function useWebSocket() {
         completeJob(msg.job_id)
         // Auto-remove from sidebar after 10s
         setTimeout(() => removeJob(msg.job_id), 10000)
+        if (isStudioJob(msg.job_type || useAppStore.getState().activeJobs[msg.job_id]?.jobType)) return
         const result = msg.result || {}
         // Determine job type from active jobs store
         const jobInfo = useAppStore.getState().activeJobs[msg.job_id]
@@ -226,7 +241,12 @@ export default function useWebSocket() {
       }),
 
       ws.on("job_failed", (msg) => {
+        const studioJob = isStudioJob(msg.job_type || useAppStore.getState().activeJobs[msg.job_id]?.jobType)
         failJob(msg.job_id, msg.error)
+        if (studioJob) {
+          showSnackbar(msg.error || "Something in your video didn't finish — try again", "error")
+          return
+        }
         addMessage({
           role: "system",
           content: `Job failed: ${msg.error || "Unknown error"}`,

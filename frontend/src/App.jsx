@@ -11,7 +11,8 @@ import Chat from "./pages/Chat"
 const Settings = lazy(() => import("./pages/Settings"))
 const Library = lazy(() => import("./pages/Library"))
 const Scout = lazy(() => import("./pages/Scout"))
-const StockVideo = lazy(() => import("./pages/StockVideo"))
+const SmartVideoHome = lazy(() => import("./pages/SmartVideoHome"))
+const SmartVideoStudio = lazy(() => import("./pages/SmartVideoStudio"))
 const Channels = lazy(() => import("./pages/Channels"))
 const ClipStudio = lazy(() => import("./pages/ClipStudio"))
 const MotionGraphics = lazy(() => import("./pages/MotionGraphics"))
@@ -71,7 +72,13 @@ function GlobalSnackbar() {
             color="inherit"
             size="small"
             sx={{ fontWeight: 700, whiteSpace: "nowrap" }}
-            onClick={() => { navigate(snackbar.action.href); closeSnackbar() }}
+            onClick={() => {
+              // An action is a link (`href`) or an in-page step (`onClick`,
+              // e.g. the Studio's "Undo").
+              if (snackbar.action.onClick) snackbar.action.onClick()
+              else if (snackbar.action.href) navigate(snackbar.action.href)
+              closeSnackbar()
+            }}
           >
             {snackbar.action.label}
           </Button>
@@ -99,7 +106,8 @@ export default function App() {
               {/* Scout leads are not files you own, so they are not the
                   Library. `/videos?tab=scout` redirects here. */}
               <Route path="scout" element={<Scout />} />
-              <Route path="stock" element={<StockVideo />} />
+              <Route path="stock" element={<SmartVideoHome />} />
+              <Route path="stock/p/:projectId" element={<SmartVideoStudio />} />
               <Route path="ai-video" element={<Navigate to="/stock" />} />
               <Route path="avatar" element={<Navigate to="/stock" />} />
               <Route path="create" element={<Navigate to="/stock" />} />

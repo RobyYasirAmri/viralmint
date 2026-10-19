@@ -106,7 +106,7 @@ export const MEDIA_KEYS = ["video", "image", "audio", "doc"]
 // another.
 export const PRODUCERS = {
   // generated_videos.source_type — the studios.
-  smart_video: { label: "Stock Video", media: "video", origin: "created" },
+  smart_video: { label: "Smart Video", media: "video", origin: "created" },
   motion_graphics: { label: "Motion Graphics", media: "video", origin: "created" },
   // A clip is cut FROM a source you own — derived, not created. Filing it under
   // "Generated" is why a clip and the video it came from could never be seen
@@ -243,7 +243,9 @@ export const JOB_ONLY_LABELS = {
   news_scout: "News scout",
   news_save: "Saved article",
   analyze: "Analysis",
-  generate: "Stock Video",
+  generate: "Smart Video",
+  studio_plan: "Planning scenes",
+  studio_voice: "Voicing scenes",
   batch_generate: "Batch videos",
   motion_render: "Motion render",
   motion_compose: "AI Compose",
@@ -407,7 +409,7 @@ export function activityFromJob(job) {
     bound = true
   }
   // "Ask AI" on the bench PROPOSES ranges — nothing is cut, no file lands, so
-  // it earns no pending tile and must not read as a Stock Video render.
+  // it earns no pending tile and must not read as a Smart Video render.
   if (norm === "generate" && input?.type === "clip_suggestion") {
     p = { ...(classify("clip_extraction") || p) }
     label = "Clip suggestions"

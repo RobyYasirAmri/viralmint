@@ -1,6 +1,13 @@
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useState } from "react"
 import { Box, Typography, Paper, Tooltip } from "@mui/material"
 import { glassSelectedGlow } from "../../utils/glassFx"
+import useLiveAnimation from "../studio/useLiveAnimation"
+
+// The canvases below draw ONE static frame at rest and loop only while
+// useLiveAnimation says so (on screen, tab visible, no reduced motion, and —
+// for a swatch — hovered or selected). /stock used to run every swatch and
+// sample card forever: ~26 rAF loops idle, 16 more in the Studio's Project
+// panel (audit 2026-09-25).
 
 // ── Visual style palettes — id maps directly to the backend's
 //    `visual_style` param (cinematic/vlog/card/educational/documentary).
@@ -23,17 +30,21 @@ export function PreviewCanvas({ paletteA, paletteB, captionText, aspectRatio }) 
   const W = isSquare ? 460 : isVertical ? 320 : 568
   const H = isSquare ? 460 : isVertical ? 568 : 320
 
+  // The live preview has no hover to wait for: it animates whenever it can be seen.
+  const animate = useLiveAnimation(canvasRef, true)
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
+    if (!ctx) return
     let raf = 0
-    const t0 = performance.now()
     const words = (captionText || "Your script will animate here").split(/\s+/).filter(Boolean)
+    // At rest: the whole caption written out.
+    const staticT = (words.length + 0.5) / 2.3
+    const t0 = performance.now() - staticT * 1000
 
-    const draw = (now) => {
-      const t = (now - t0) / 1000
-
+    const paint = (t) => {
       const pan = Math.sin(t * 0.15) * 0.10
       const zoom = 1.04 + Math.sin(t * 0.10) * 0.04
       ctx.save()
@@ -121,12 +132,16 @@ export function PreviewCanvas({ paletteA, paletteB, captionText, aspectRatio }) 
       ctx.fillStyle = "#FFFFFF"
       ctx.font = "700 11px -apple-system, sans-serif"
       ctx.fillText("LIVE PREVIEW", 32, 13)
+    }
 
+    if (!animate) { paint(staticT); return undefined }
+    const draw = (now) => {
+      paint((now - t0) / 1000)
       raf = requestAnimationFrame(draw)
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [paletteA, paletteB, captionText, isVertical, W, H])
+  }, [paletteA, paletteB, captionText, isVertical, W, H, animate])
 
   // Fit-contain the canvas directly (no shrink-wrap wrapper). An inline-block
   // wrapper sizes to the canvas's intrinsic W×H, so maxHeight:100% on the
@@ -171,7 +186,24 @@ export function PreviewCanvas({ paletteA, paletteB, captionText, aspectRatio }) 
  * user is comparing "the same shot in five different visual treatments" —
  * which is exactly what the visual_style parameter does at render time.
  */
-function StyleSwatchPreview({ style, w = 178, h = 100 }) {
+// Draw `text` centred at (x, y), shrinking from `px` down to `minPx` until it
+// fits `maxW`; draw nothing if it still doesn't. These swatches render at three
+// widths (178 / 88 / 72) off one draw routine, so any fixed-size label is a
+// clipping bug waiting for the narrowest caller.
+function fitText(ctx, text, maxW, px, minPx, x, y) {
+  const family = "-apple-system, sans-serif"
+  for (let size = px; size >= minPx; size -= 1) {
+    ctx.font = `600 ${size}px ${family}`
+    if (ctx.measureText(text).width <= maxW) {
+      ctx.fillText(text, x, y)
+      return
+    }
+  }
+}
+
+const SWATCH_STATIC_T = 1.2
+
+function StyleSwatchPreview({ style, w = 178, h = 100, animate = false }) {
   const canvasRef = useRef(null)
   const W = w, H = h
 
@@ -179,8 +211,9 @@ function StyleSwatchPreview({ style, w = 178, h = 100 }) {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
+    if (!ctx) return
     let raf = 0
-    const t0 = performance.now()
+    const t0 = performance.now() - SWATCH_STATIC_T * 1000
 
     // ── Style-specific tone presets ────────────────────
     // Sky / ground / sun colors are tuned to each style so the same scene
@@ -265,8 +298,7 @@ function StyleSwatchPreview({ style, w = 178, h = 100 }) {
       ctx.restore()
     }
 
-    const draw = (now) => {
-      const t = (now - t0) / 1000
+    const paint = (t) => {
       ctx.clearRect(0, 0, W, H)
 
       if (style.id === "cinematic") {
@@ -313,7 +345,11 @@ function StyleSwatchPreview({ style, w = 178, h = 100 }) {
         ctx.fillText("“", W * 0.5, H * 0.55)
         ctx.font = "600 9px -apple-system, sans-serif"
         ctx.fillStyle = "rgba(255,255,255,0.75)"
-        ctx.fillText("text-card moment", W / 2, H * 0.80)
+        // The swatch is 178px wide in the gallery but only 88 (compact) or 72
+        // (mini) in the studio rails, where this label ran off both edges and
+        // read as "ext-card momen". Shrink to fit, and drop it entirely when
+        // even the floor size won't fit — the quote mark alone carries it.
+        fitText(ctx, "text-card moment", W * 0.92, 9, 6, W / 2, H * 0.80)
         ctx.textAlign = "left"
       } else if (style.id === "educational") {
         // Clean, bright scene + a small concept arrow + label
@@ -419,12 +455,16 @@ function StyleSwatchPreview({ style, w = 178, h = 100 }) {
       sheen.addColorStop(1, "rgba(255,255,255,0)")
       ctx.fillStyle = sheen
       ctx.fillRect(0, 0, W, H * 0.4)
+    }
 
+    if (!animate) { paint(SWATCH_STATIC_T); return undefined }
+    const draw = (now) => {
+      paint((now - t0) / 1000)
       raf = requestAnimationFrame(draw)
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [style])
+  }, [style, W, H, animate])
 
   return <canvas ref={canvasRef} width={W} height={H} style={{ display: "block", width: "100%", height: H }} />
 }
@@ -433,12 +473,23 @@ function StyleSwatchPreview({ style, w = 178, h = 100 }) {
 // Style panel); `compact` = the older slim-rail size; default = large.
 export function StyleSwatch({ style, selected, onClick, compact, mini }) {
   const small = compact || mini
-  const pw = mini ? 56 : compact ? 88 : 178
-  const ph = mini ? 32 : compact ? 50 : 100
+  // Mini was 56px wide to squeeze eight swatches into one nowrap row — which
+  // it never managed (three were unreachable) and which clipped every label
+  // longer than ~10 characters into "Documentar" / "t-Card mome". Now that the
+  // rail lays them out 4-up in a grid there's room: 4x72 + gaps still fits the
+  // 352px rail, and the label gets two lines to wrap into.
+  const pw = mini ? 72 : compact ? 88 : 178
+  const ph = mini ? 40 : compact ? 50 : 100
+  const ref = useRef(null)
+  const [hot, setHot] = useState(false)
+  const animate = useLiveAnimation(ref, hot || selected)
   const swatch = (
     <Paper
+      ref={ref}
       elevation={0}
       onClick={onClick}
+      onMouseEnter={() => setHot(true)}
+      onMouseLeave={() => setHot(false)}
       sx={(theme) => ({
         cursor: "pointer",
         borderRadius: 2,
@@ -457,7 +508,7 @@ export function StyleSwatch({ style, selected, onClick, compact, mini }) {
         },
       })}
     >
-      <StyleSwatchPreview style={style} w={pw} h={ph} />
+      <StyleSwatchPreview style={style} w={pw} h={ph} animate={animate} />
       <Box sx={{ px: small ? 0.5 : 1, pt: small ? 0.35 : 0.75, pb: small ? 0.45 : 1 }}>
         <Typography
           noWrap={!mini}

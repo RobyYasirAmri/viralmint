@@ -34,7 +34,7 @@ const navItems = [
   { to: "/channels",  icon: <SensorsIcon />,          label: "My Channels" },
   { to: "/clips",     icon: <ContentCutIcon />,       label: "Clip Studio" },
   { to: "/videos",    icon: <VideoLibraryIcon />,     label: "Library" },
-  { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Stock Video" },
+  { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Smart Video" },
   { to: "/motion",    icon: <MovieFilterIcon />,      label: "Motion Graphics" },
   { to: "/tools",     icon: <BuildIcon />,            label: "Tools" },
   // Messaging lives in Settings → Messaging (/messaging redirects there).
@@ -58,7 +58,7 @@ export default function Layout() {
   const activeJobs = useAppStore(s => s.activeJobs)
   const runningJobCount = Object.values(activeJobs).filter(j => j.status === "running").length
   // The Activity panel is mounted HERE, not on a page: jobs start from the
-  // Clipper, Stock Video, a tool page and the Motion studio alike, and it used
+  // Clipper, Smart Video, a tool page and the Motion studio alike, and it used
   // to be a Library tab reachable from exactly one route.
   const activityOpen = useAppStore(s => s.activityOpen)
   const openActivity = useAppStore(s => s.openActivity)
