@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2025-2026 ViralMint Contributors
 """Edge TTS — free Microsoft voices via edge-tts package. Zero cost, no API key."""
+import asyncio
 import logging
+import random
 import re
+import weakref
 from pathlib import Path
 
 from backend.config import settings
@@ -68,6 +71,46 @@ def _add_natural_pauses(text: str) -> str:
     return processed
 
 
+# Microsoft's endpoint refuses a share of websocket handshakes with 403 (and
+# the odd 429/5xx/reset, or an empty "No audio was received" stream).
+# Measured on the hosted variant: refusals are independent per handshake at
+# ~0.39 — so a 12-scene Studio draft lost a take or two almost every time.
+# Capping concurrent connections at 2 and retrying a transient failure up to
+# 8 times takes the per-line loss to ≈ 0.05%. Waiting only happens on a
+# refusal (worst case ~17 s).
+_MAX_CONCURRENT = 2
+_MAX_ATTEMPTS = 8
+_RETRY_DELAYS_S = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0)
+# One semaphore PER event loop: an asyncio.Semaphore binds to the first loop
+# that waits on it and raises in any other (each asyncio.run is a new loop).
+_edge_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def _slots() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _edge_slots.get(loop)
+    if sem is None:
+        sem = _edge_slots[loop] = asyncio.Semaphore(_MAX_CONCURRENT)
+    return sem
+
+
+def _is_transient(err: Exception) -> bool:
+    """Worth another attempt: a refused/throttled handshake, a dropped
+    connection, a timeout, or edge-tts's own "no audio" on an empty stream.
+    A bad voice id / bad SSML (ValueError etc.) fails the same way every time."""
+    try:
+        import aiohttp
+        if isinstance(err, aiohttp.WSServerHandshakeError):
+            return err.status in (403, 408, 429) or err.status >= 500
+        if isinstance(err, (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError)):
+            return True
+    except ImportError:  # pragma: no cover — aiohttp ships with edge-tts
+        pass
+    if isinstance(err, (asyncio.TimeoutError, ConnectionError)):
+        return True
+    return type(err).__name__ in ("NoAudioReceived", "WebSocketError")
+
+
 async def generate_voice(
     text: str,
     voice_id: str = None,
@@ -86,13 +129,24 @@ async def generate_voice(
 
         # Add natural pauses via punctuation and use native rate/pitch
         processed_text = _add_natural_pauses(text) if use_ssml else text
-        communicate = edge_tts.Communicate(
-            processed_text,
-            voice_id,
-            rate="-5%",
-            pitch="+2Hz",
-        )
-        await communicate.save(str(output_path))
+        async with _slots():
+            for attempt in range(_MAX_ATTEMPTS):
+                communicate = edge_tts.Communicate(
+                    processed_text,
+                    voice_id,
+                    rate="-5%",
+                    pitch="+2Hz",
+                )
+                try:
+                    await communicate.save(str(output_path))
+                    break
+                except Exception as e:
+                    if not _is_transient(e) or attempt == _MAX_ATTEMPTS - 1:
+                        raise
+                    delay = _RETRY_DELAYS_S[min(attempt, len(_RETRY_DELAYS_S) - 1)]
+                    logger.info("Edge TTS attempt %d/%d failed (%s) — retrying in %.1fs",
+                                attempt + 1, _MAX_ATTEMPTS, str(e)[:80], delay)
+                    await asyncio.sleep(delay * (0.75 + random.random() * 0.5))
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise VoiceGenerationError("Edge TTS returned empty audio")

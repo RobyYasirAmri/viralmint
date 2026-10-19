@@ -89,7 +89,7 @@ imageio-ffmpeg>=0.6.0
 Pillow>=12.3.0,<13.0
 
 # Multi-TTS providers
-edge-tts>=6.1.0
+edge-tts>=7.3.1
 
 # TikTok upload (cookie fallback)
 tiktok-uploader>=1.2.0
