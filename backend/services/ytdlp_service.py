@@ -1227,7 +1227,7 @@ async def download_video(
                 video_path = actual
 
         # Extract subtitles from downloaded files
-        subtitles = _collect_subtitles(output_dir, file_stem_resolved)
+        subtitles = _collect_subtitles(output_dir, file_stem_resolved, info=info)
 
         # Clean up subtitle files after parsing (they're stored in DB now).
         #
@@ -1344,8 +1344,40 @@ async def download_video(
     )
 
 
-def _collect_subtitles(output_dir: Path, video_id: str) -> list[dict] | None:
-    """Find downloaded subtitle files and parse the best one into text segments."""
+def _collect_subtitles(
+    output_dir: Path, video_id: str, info: dict | None = None,
+) -> list[dict] | None:
+    """Find downloaded subtitle files and parse the best one into text segments.
+
+    Language-aware picker, in priority order:
+      1. Creator subtitle in the video's primary language (info.language).
+      2. Auto subtitle in the video's primary language.
+      3. Creator subtitle in English (most likely original for our scout sources).
+      4. Auto subtitle in English.
+      5. Any creator subtitle.
+      6. First available file (final fallback).
+
+    Why auto-in-target beats creator-in-wrong-language: the analyzer +
+    generator consume this transcript to understand the video's actual
+    content. An auto-generated transcript in the right language is more
+    useful than a human-quality transcript in the wrong one.
+
+    Why this exists: the previous picker ran `glob.glob()` (alphabetic on
+    most filesystems) and used `[0]`, so the FIRST subtitle alphabetically
+    won. With our 10-language download set
+    (`["en","zh","ja","ko","es","fr","de","pt","ru","ar"]`), Arabic comes
+    first — and because `writeautomaticsub` also fetches YouTube's machine
+    TRANSLATIONS of the auto captions, an English video with no creator
+    subtitles at all ("Charlie bit my finger") got an Arabic transcript,
+    labelled "creator_subtitles". The analyzer and every script written
+    from the source then came out in Arabic.
+
+    `info` is the yt-dlp info dict from extract_info(download=True). When
+    provided, `info["language"]` gives the original-language code and
+    `info["subtitles"]` / `info["automatic_captions"]` distinguish creator
+    subs from auto-generated. When None, we fall through to filename-based
+    heuristics (legacy behavior — preserved for safety).
+    """
     # yt-dlp saves subtitles as: {video_id}.{lang}.{ext}
     patterns = [
         str(output_dir / f"{video_id}.*.srt"),
@@ -1358,26 +1390,97 @@ def _collect_subtitles(output_dir: Path, video_id: str) -> list[dict] | None:
     if not sub_files:
         return None
 
-    # Prefer creator subtitles (no "auto" in filename) over auto-generated
-    creator_subs = [f for f in sub_files if ".auto." not in Path(f).name]
-    chosen = creator_subs[0] if creator_subs else sub_files[0]
+    # Build per-file metadata. yt-dlp's filename pattern is
+    # `{video_id}.{lang}.{ext}` where `lang` may carry a region tag
+    # (e.g. "en-US", "zh-Hans"). We normalize to the primary tag (before
+    # the first hyphen) so "en-US" matches info.language="en".
+    files = []
+    for f in sub_files:
+        stem = Path(f).stem  # e.g. "video_id.en-US"
+        parts = stem.split(".")
+        raw_lang = parts[-1] if len(parts) > 1 else ""
+        primary = raw_lang.lower().split("-", 1)[0]
+        files.append({"file": f, "raw_lang": raw_lang, "primary": primary})
+
+    # When yt-dlp metadata is available, it's the source of truth for
+    # creator-vs-auto. info["subtitles"] keys are creator-provided langs;
+    # info["automatic_captions"] are auto-generated. We tag each file
+    # against those dicts; absent metadata, we fall back to the legacy
+    # ".auto." filename heuristic (which is mostly a no-op since yt-dlp
+    # writes both creator and auto subs to the same filename pattern,
+    # but kept for defense in depth).
+    # Only creator langs are needed: `_is_creator` treats "not in
+    # creator_langs" as auto/stale, so a separate auto_langs set added
+    # nothing.
+    creator_langs: set[str] = set()
+    if info:
+        creator_langs = {l.lower() for l in (info.get("subtitles") or {}).keys()}
+
+    def _is_creator(entry: dict) -> bool:
+        if info:
+            raw = entry["raw_lang"].lower()
+            primary = entry["primary"]
+            # Trust metadata when present: a lang is creator-provided ONLY
+            # if it's in info["subtitles"]. If it's in automatic_captions
+            # (or not listed at all — could be a stale file from a previous
+            # download), treat as non-creator. Otherwise a leftover file
+            # would beat a real auto-caption in the same lang.
+            return raw in creator_langs or primary in creator_langs
+        # No metadata — fall back to filename heuristic. yt-dlp's default
+        # writer uses the same filename pattern for both creator and auto
+        # subs, so this rarely fires; preserved as a safety net.
+        return ".auto." not in Path(entry["file"]).name
+
+    # Normalize the video's primary language. Strip region tag and
+    # lowercase for a stable comparison.
+    target_primary = ""
+    if info:
+        raw = (info.get("language") or "").lower()
+        if raw:
+            target_primary = raw.split("-", 1)[0]
+
+    def _find(want_creator: bool, want_lang_primary: str | None) -> dict | None:
+        for entry in files:
+            is_cr = _is_creator(entry)
+            if want_creator and not is_cr:
+                continue
+            if not want_creator and is_cr:
+                continue
+            if want_lang_primary and entry["primary"] != want_lang_primary:
+                continue
+            return entry
+        return None
+
+    chosen_entry = (
+        # Right language wins regardless of creator/auto.
+        (target_primary and _find(True, target_primary))
+        or (target_primary and _find(False, target_primary))
+        # Then English (creator > auto), the most likely original.
+        or _find(True, "en")
+        or _find(False, "en")
+        # Last resort: any creator sub at all, then any file.
+        or _find(True, None)
+        or files[0]
+    )
+
+    chosen = chosen_entry["file"]
 
     try:
         text = Path(chosen).read_text(encoding="utf-8", errors="replace")
         segments = _parse_subtitle_text(text, chosen)
+        source = "creator_subtitles" if _is_creator(chosen_entry) else "auto_subtitles"
 
-        # Detect language from filename (e.g. "video_id.en.srt" → "en")
-        stem = Path(chosen).stem  # "video_id.en"
-        parts = stem.split(".")
-        lang = parts[-1] if len(parts) > 1 else None
-
-        # Determine source type
-        is_auto = ".auto." in Path(chosen).name or any(".auto." in f for f in sub_files if f == chosen)
-        source = "auto_subtitles" if is_auto else "creator_subtitles"
+        # Log when language picker rescues us from a mismatch — useful for
+        # confirming the fix is doing real work in production logs.
+        if target_primary and chosen_entry["primary"] != target_primary:
+            logger.info(
+                "Subtitle picker: video lang=%s, no matching sub available — using %s (%s)",
+                target_primary, chosen_entry["raw_lang"], source,
+            )
 
         return {
             "text": _segments_to_text(segments),
-            "language": lang,
+            "language": chosen_entry["raw_lang"],
             "source": source,
             "segments": segments,
             "file": str(chosen),

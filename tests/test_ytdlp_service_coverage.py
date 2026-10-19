@@ -215,6 +215,46 @@ class TestCollectSubtitles:
         assert result["source"] == "creator_subtitles"
         assert "Creator line" in result["text"]
 
+    @staticmethod
+    def _vtt(path, line):
+        path.write_text(f"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n{line}\n", encoding="utf-8")
+
+    def test_an_english_video_with_only_auto_captions_gets_english(self, tmp_path):
+        """The case seen live: "Charlie bit my finger" has no creator
+        subtitles, only auto captions — its own English ASR plus machine
+        translations. yt-dlp writes every requested language as
+        `{id}.{lang}.vtt` (no ".auto." marker), and the old picker took the
+        first file alphabetically: an ARABIC translation, labelled
+        "creator_subtitles", so the scripts written from it were Arabic."""
+        self._vtt(tmp_path / "v.ar.vtt", "تشارلي عضني")
+        self._vtt(tmp_path / "v.de.vtt", "Charlie hat mich gebissen")
+        self._vtt(tmp_path / "v.en.vtt", "Charlie bit me")
+        info = {"language": "en", "subtitles": {},
+                "automatic_captions": {"ar": [], "de": [], "en": [], "en-orig": []}}
+        result = ys._collect_subtitles(tmp_path, "v", info=info)
+        assert result["language"] == "en" and "Charlie bit me" in result["text"]
+        assert result["source"] == "auto_subtitles"
+
+    def test_the_videos_own_language_beats_an_alphabetically_earlier_creator_sub(self, tmp_path):
+        self._vtt(tmp_path / "v.ar.vtt", "عربي")
+        self._vtt(tmp_path / "v.en.vtt", "English original")
+        info = {"language": "en", "subtitles": {"ar": [], "en": []}, "automatic_captions": {}}
+        result = ys._collect_subtitles(tmp_path, "v", info=info)
+        assert (result["language"], result["source"]) == ("en", "creator_subtitles")
+
+    def test_a_video_in_another_language_keeps_its_own(self, tmp_path):
+        self._vtt(tmp_path / "v.en.vtt", "translated")
+        self._vtt(tmp_path / "v.ja.vtt", "日本語のオリジナル")
+        info = {"language": "ja", "subtitles": {}, "automatic_captions": {"en": [], "ja": []}}
+        result = ys._collect_subtitles(tmp_path, "v", info=info)
+        assert result["language"] == "ja" and "オリジナル" in result["text"]
+
+    def test_no_stated_language_prefers_english_over_alphabetical_order(self, tmp_path):
+        self._vtt(tmp_path / "v.ar.vtt", "عربي")
+        self._vtt(tmp_path / "v.en.vtt", "English")
+        info = {"subtitles": {"ar": [], "en": []}, "automatic_captions": {}}
+        assert ys._collect_subtitles(tmp_path, "v", info=info)["language"] == "en"
+
     def test_parse_failure_returns_none_or_empty(self, tmp_path):
         bad = tmp_path / "v.en.srt"
         bad.write_bytes(b"\xff\xfe\xfd")  # truly malformed

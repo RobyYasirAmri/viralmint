@@ -43,6 +43,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   MCP tool uploads or publishes anything.
 
 ### Fixed
+- **A downloaded video's transcript is in the video's own language.** The
+  downloader fetches subtitles in ten languages — for a video without
+  creator subtitles that means YouTube's machine translations — and then
+  kept whichever file sorted first. An English video could come back with an
+  Arabic transcript (labelled as the creator's), and the analysis and every
+  script written from it followed in Arabic. It now picks the video's own
+  language first, then English, and tells creator subtitles from automatic
+  captions correctly.
 - **A batch of videos no longer reports failed renders as done.** A render
   that failed recorded it on its own job without raising an error, and the
   batch counted "no error" as success — a batch where every video failed
