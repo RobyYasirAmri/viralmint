@@ -5,7 +5,7 @@ backend/services/outlier_detection_service.py.
 
 The outlier tiers (3× / 5× / 10× / 20× channel median) are
 user-facing — they drive the colored chips on every scout-result
-card (CLAUDE.md §7) and appear in many of the AI prompts. The exact
+card and appear in many of the AI prompts. The exact
 thresholds matter; a regression here changes what users see.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from backend.services.outlier_detection_service import (
 
 
 class TestClassifyOutlierTiers:
-    """The four tier thresholds documented in CLAUDE.md §7. Locking the
+    """The four tier thresholds. Locking the
     exact numbers down so a refactor can't silently rebalance them."""
 
     def test_below_3x_returns_none(self):

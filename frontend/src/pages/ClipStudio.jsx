@@ -1226,7 +1226,7 @@ export default function ClipStudio() {
             </Box>
           ) : (
             /* Empty state — guide the user to the next action so they never
-               hit a dead end (PivotPlan §11). Three cases:
+               hit a dead end. Three cases:
                - no clips AND no sources → get a source (download / import)
                - no clips but have sources → extract from the first one
                - clips exist, none selected → pick one from the filmstrip */

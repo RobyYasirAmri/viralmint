@@ -21,7 +21,7 @@
  *   video you own         → audio  · edited   (parent = that video)
  *
  * PRODUCERS mirrors the backend's producer map: job_type / source_type →
- * { label, media, origin } (rule #32 — the backend map is the source of
+ * { label, media, origin } (derive, don't duplicate — the backend map is the source of
  * truth; keep this one in step, with the drift pinned by assetModel.test.js).
  * Anything that writes a durable file and is missing here is invisible in the
  * Library — the exact bug the rewrite exists to fix.

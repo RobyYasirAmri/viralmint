@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
-// Legacy `/stock?…` links → a Studio project (SmartVideoStudioRedesign.md §9.2).
+// Legacy `/stock?…` links → a Studio project.
 //
 // These params arrive in a URL (Library "Use as inspiration", any bookmarked
 // link) — every value is validated before it reaches a project. A `?script=`
@@ -31,7 +31,7 @@ export function parseLegacyQuery(params) {
   const settings = {}
   const captions = onOff(get("captions"))
   const capStyle = get("caption_style")
-  // "none" is the disable SENTINEL, not a style id (§8) — captions-off travels in `captions`.
+  // "none" is the disable SENTINEL, not a style id — captions-off travels in `captions`.
   if (captions !== null || (capStyle && capStyle !== "none" && /^[a-z0-9_-]{1,32}$/.test(capStyle))) {
     settings.captions = {
       ...(captions !== null ? { enabled: captions } : {}),

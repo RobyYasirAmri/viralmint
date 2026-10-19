@@ -43,7 +43,7 @@ const SOURCES = [
   { value: "topic", label: "Start from a topic", icon: <LightbulbOutlinedIcon fontSize="small" /> },
 ]
 
-// Studio Home's script desk (§5.2). The script is the thing you work on here:
+// Studio Home's script desk. The script is the thing you work on here:
 // a topic drafts INTO it and a sample loads INTO it, so every start is
 // reviewable text first. The scene list beside it is the same grouping the
 // editor builds from (planLines), so it previews the storyboard exactly.
@@ -52,7 +52,7 @@ export default function StartPanel({ onCreate, busy = false, preferTopic = false
   const [script, setScript] = useState("")
   const [topic, setTopic] = useState("")
   const [origin, setOrigin] = useState({ title: "", sampleId: null })
-  // The last video's aspect and look are this one's defaults (§5.2).
+  // The last video's aspect and look are this one's defaults.
   const last = readLast("start") || {}
   const [aspect, setAspect] = useState(ASPECTS.includes(last.aspect) ? last.aspect : "9:16")
   const [style, setStyle] = useState(STYLES.some((s) => s.id === last.style) ? last.style : "cinematic")

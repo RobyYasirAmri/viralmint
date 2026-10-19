@@ -29,7 +29,7 @@ import useAppStore from "../store/appStore"
 import useDocumentTitle from "../hooks/useDocumentTitle"
 
 
-// Smart Video Studio — the editor (SmartVideoStudioRedesign.md §5.4).
+// Smart Video Studio — the editor.
 //
 //   TopBar
 //   MediaBin | SequencePlayer [ScenePanel while a scene is selected] | Inspector (Project)

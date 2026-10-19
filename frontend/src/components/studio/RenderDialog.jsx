@@ -8,7 +8,7 @@ import { musicLabel, voiceKindLabel } from "./studioModel"
 import { captionStyleLabel } from "../tools/captionOptions"
 import { formatClock } from "../../utils/format"
 
-// The one render confirmation (§5.9): what the video is, what blocks the
+// The one render confirmation: what the video is, what blocks the
 // render and what's worth knowing first. Blockers and warnings come from the
 // server (`project.checks`), which re-checks them when the render starts.
 export default function RenderDialog({ open, onClose, onConfirm, rendering, project, timeline }) {

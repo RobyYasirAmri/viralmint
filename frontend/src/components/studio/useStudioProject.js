@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import * as api from "./studioApi"
 
-// The one owner of a Studio project's state (§8.2): load, serialised edits with
+// The one owner of a Studio project's state: load, serialised edits with
 // revision checks, undo/redo as a doc-snapshot stack (D19), and the background
 // calls (voice, plan, render) whose jobs write back into the project.
 //

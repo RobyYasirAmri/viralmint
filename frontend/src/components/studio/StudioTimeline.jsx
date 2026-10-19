@@ -14,7 +14,7 @@ import { KIND_META, hashString, isShortVisual, musicLabel, musicTrackName } from
 import { formatClock } from "../../utils/format"
 import { usePlayhead, usePlayheadStore } from "./playheadStore"
 
-// The scene timeline (§5.4): visual · voice · captions · music over one time
+// The scene timeline: visual · voice · captions · music over one time
 // axis. Scene-level editing only — click selects, drag reorders. Owns all
 // px↔seconds conversion, like Clipper's bench timeline. No <video> anywhere
 // in here: blocks are drawn, not decoded.

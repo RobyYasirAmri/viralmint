@@ -10,7 +10,7 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded"
 import { aspectValue } from "./studioModel"
 import { downloadGeneratedVideo } from "../../utils/downloadVideo"
 
-// The finished video, where the user is (§5.9 completion card). Finishing a
+// The finished video, where the user is. Finishing a
 // video is the funnel event — this card keeps the moment in the studio instead
 // of sending people to look for the file in the Library: watch it, download
 // it, copy the drafted title + description, make another like it.

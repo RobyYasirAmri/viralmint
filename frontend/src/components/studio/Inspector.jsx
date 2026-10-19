@@ -39,7 +39,7 @@ import { STYLES, StyleSwatch } from "../create/SmartVideoStyles"
 import CaptionStylePicker from "../tools/CaptionStylePicker"
 import { captionStyleLabel } from "../tools/captionOptions"
 
-// The right column (§5.4) is the PROJECT panel: settings that apply to the
+// The right column is the PROJECT panel: settings that apply to the
 // whole video. The selected scene's panel (SceneTab, exported below) sits
 // beside the player instead — see ScenePanel.jsx — and exists only while a
 // scene is selected in the timeline (owner, 2026-09-16).

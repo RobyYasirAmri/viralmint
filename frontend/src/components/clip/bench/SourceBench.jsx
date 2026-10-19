@@ -487,7 +487,7 @@ export default function SourceBench({
   // Declared up here, not after the `!source` guard: `askAi` below reads it,
   // and a const referenced above its declaration is a TDZ ReferenceError at
   // render — which `vite build` compiles without a word (the CloseIcon
-  // lesson, 2026-08-06; CLAUDE.md rule #28).
+  // lesson, 2026-08-06; assert the rendered page, not the build).
   const atCap = R.atCap
 
   /* ── Ask AI ─────────────────────────────────────────────────

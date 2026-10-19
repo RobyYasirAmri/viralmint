@@ -4,7 +4,7 @@
 
 Each fix follows a pattern that already existed in the codebase rather than
 inventing one — temp-then-replace from `extract_thumbnail`, a scaled timeout from
-the caption burn and the silence pass, a constraint warning from rule #14.
+the caption burn and the silence pass, a constraint warning — never a silent failure.
 """
 from __future__ import annotations
 

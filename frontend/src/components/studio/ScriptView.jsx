@@ -11,7 +11,7 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline"
 import AddIcon from "@mui/icons-material/Add"
 import { LINE_MAX, VOICE_STATE } from "./studioModel"
 
-// The full script as a document (§5.8): one paragraph per scene, edited in
+// The full script as a document: one paragraph per scene, edited in
 // place. It is the same ops underneath — set_line (re-voices), split_scene,
 // merge_scenes, remove_scene, insert_scene — so revising the writing here is
 // exactly as safe as editing a scene in the inspector, just faster.

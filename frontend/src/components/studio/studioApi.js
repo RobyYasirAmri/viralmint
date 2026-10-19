@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
-// Smart Video Studio — the /api/studio client (SmartVideoStudioRedesign.md §7.2).
+// Smart Video Studio — the /api/studio client.
 //
 // Every project call returns the server ENVELOPE, normalised so components
 // keep the field names they already use (`project.media`, `project.checks`…).

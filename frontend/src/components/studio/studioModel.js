@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
-// Smart Video Studio — the shared scene model (SmartVideoStudioRedesign.md §4).
+// Smart Video Studio — the shared scene model.
 //
 // Pure helpers only: derived timing, critic notes, labels, and the script
 // packing rules the backend uses (studio_doc.py).
 import { narrationStats } from "../../utils/spokenLength"
 
-// ── Enums shared by every Smart Video surface (one module per side, rule #32;
+// ── Enums shared by every Smart Video surface (one module per side, derive, don't duplicate;
 // the backend twins live in studio_doc.py). ─────────────────────────────────
 export const ASPECTS = ["9:16", "16:9", "1:1"]
 const ASPECT_RATIO = { "9:16": 9 / 16, "16:9": 16 / 9, "1:1": 1 }
@@ -208,7 +208,7 @@ export const isShortVisual = (scene) => {
   return !!n && ["stock", "user_clip"].includes(scene.visual.kind) && n + 0.05 < scene.dur
 }
 
-// Each finding carries the fix that resolves it (§5.4 "Notes (critic)" with
+// Each finding carries the fix that resolves it" with
 // fix chips): a note without a button is homework. `fix.kind` is what the
 // editor does — split the scene, search stock for a longer clip, or go back
 // to stock — all plain edits.

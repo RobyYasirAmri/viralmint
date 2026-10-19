@@ -1760,7 +1760,7 @@ async def stream_downloaded(video_id: str, request: Request,
     """Stream a downloaded video with Range support for seeking.
 
     Delegates to `videos.serve_media_with_range` — one implementation, one
-    place to get an open-ended `bytes=N-` right (rule #32). This route used to
+    place to get an open-ended `bytes=N-` right (derive, don't duplicate). This route used to
     answer with a plain FileResponse, which is fine for a download and wrong
     for the cutting bench, whose whole interaction is seeking.
     """

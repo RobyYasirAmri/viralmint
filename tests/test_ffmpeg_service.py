@@ -6,7 +6,7 @@ FFmpeg / ffprobe are NEVER invoked — every `subprocess.run` boundary is
 mocked and `probe_duration` is patched. The focus is on the parts we can
 assert on without real media:
 
-  - argv construction (rule #27 shell-safety: every command is a list, never
+  - argv construction (shell-safety: every command is a list, never
     a shell string; no `shell=True` anywhere)
   - filter-graph / vf builders (aspect convert, blur-fill, xfade, zoompan,
     auto-zoom crop math)

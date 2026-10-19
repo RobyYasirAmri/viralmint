@@ -13,7 +13,7 @@ import { onActivate } from "../../utils/a11y"
 import { BIN_MIN } from "./editorLayout"
 import { isFixedVisual, queryGradient, stockLabel } from "./studioModel"
 
-// The media bin (§5.4): find something to put in the selected scene — stock
+// The media bin: find something to put in the selected scene — stock
 // footage, or your own uploaded clips. Tiles are thumbnails, never <video> —
 // a clip plays in the player when you click it.
 //

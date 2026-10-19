@@ -1347,7 +1347,7 @@ async def run_extract_clips(
         # Tell the USER, not just the log, when a caption burn failed. The job
         # still reports success — the clips exist and play — and the rows still
         # save as "ready", so before this the only trace of a failed burn was a
-        # log line: a customer found out by watching the files (rule #14).
+        # log line: a customer found out by watching the files (warn — never fail silently).
         uncaptioned = sum(
             1 for c in clips
             if c.get("caption_status") in ("failed", "extract_failed")

@@ -5,7 +5,7 @@
 Placement is pure logic over word timestamps (keyword triggers, transition
 whooshes, pause bass-drops, spacing + count caps). Mixing/generation shell out
 to FFmpeg — those are mocked so nothing spawns a process, and we assert the
-argv is a real list (never shell=True string-concat, per rule #27c).
+argv is a real list (never shell=True string-concat, the shell-safety rule).
 """
 from pathlib import Path
 from unittest.mock import MagicMock, patch

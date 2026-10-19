@@ -194,7 +194,7 @@ class GeneratorAgent:
                 # ffmpeg error, a zero-byte write) — so an unchanged path IS the
                 # failure signal. The video still ships, but the user asked for
                 # captions, so the least this owes them is to say they are
-                # missing (rule #14) instead of leaving it in a log file.
+                # missing (warn — never fail silently) instead of leaving it in a log file.
                 before_captions = str(video_path)
                 try:
                     await ws_manager.send_progress(job_id, 75, f"Burning {opts['caption_style']} captions...", user_id)

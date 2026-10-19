@@ -243,7 +243,7 @@ class ScoutAgent:
 
         # Enrich YouTube results with real outlier detection (batch channel
         # baselines). Enrichment is a bonus, never a dependency — a bug here
-        # must not fail a scout that already collected results (rule #10; a
+        # must not fail a scout that already collected results (one platform failing never crashes a scout; a
         # None author_url did exactly that on 2026-07-19).
         try:
             await self._enrich_with_outlier_scores(all_results, platforms, user_settings)
@@ -472,7 +472,7 @@ class ScoutAgent:
         for r in youtube_results:
             # `.get(key, "")` doesn't protect against an EXPLICIT None value —
             # ytdlp-fallback rows carry author_url=None and crashed the whole
-            # scout here (2026-07-19), violating rule #10.
+            # scout here (2026-07-19), crashing the whole scout.
             match = re.search(r'/channel/(UC[\w-]+)', r.get("author_url") or "")
             if match:
                 channel_ids.add(match.group(1))
@@ -524,7 +524,7 @@ class ScoutAgent:
             logger.info(f"No native search for '{platform}' — searching YouTube for '{search_niche}'")
             # Surface the fallback to the user — silent fallback was misleading
             # them into thinking they were scouting Bilibili (etc.) when they
-            # were actually getting YouTube cross-posts. Per CLAUDE.md rule #14.
+            # were actually getting YouTube cross-posts. Degrade loudly, never silently.
             # Quiet when run() already sent ONE aggregated notice for several
             # fallback platforms (a 34-platform LLM call once toasted 30+
             # of these individually).

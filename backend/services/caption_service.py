@@ -603,7 +603,7 @@ def align_script_to_segments(script: str, segments: list[dict]) -> list[dict]:
 #
 # Sanitising HERE rather than at the write endpoint is deliberate: this is the
 # one choke point every style — the Default line, the Hook line and the
-# per-word override tags — passes through (rule #32), and it repairs rows that
+# per-word override tags — passes through (derive, don't duplicate), and it repairs rows that
 # were written before this existed.
 _ASS_COLOUR_RE = re.compile(r"^&H[0-9A-Fa-f]{2,8}$")
 _HEX_COLOUR_RE = re.compile(r"^#?([0-9A-Fa-f]{6})$")

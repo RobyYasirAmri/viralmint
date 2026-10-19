@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025-2026 ViralMint Contributors
-// CJK-aware narration length estimation (KnownIssuesRegister P1-3, 2026-07-18).
+// CJK-aware narration length estimation (2026-07-18).
 //
 // Every "split on whitespace ÷ 2.5 words/sec" heuristic breaks on
 // whitespace-free scripts: a 244-second Chinese narration (881 chars) counted

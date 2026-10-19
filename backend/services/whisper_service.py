@@ -126,7 +126,7 @@ def job_download_notice(job_id: str, user_id: str = "local", pct: float = 5.0):
 
 
 def _toast_download_notice(user_id: str = "local"):
-    """The DEFAULT `on_download` — a constraint warning (rule #14).
+    """The DEFAULT `on_download` — a constraint warning (warn — never fail silently).
 
     Not every caller owns a Job: the voice-clip and staged-audio endpoints
     transcribe inside a request handler with nothing but a spinner on screen. A

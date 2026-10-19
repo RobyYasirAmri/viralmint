@@ -1,5 +1,5 @@
 // Curated "start from a sample" concepts for the vivid creation-page showcase
-// (PivotPlan §9/§11 — "show value, don't explain it"). Each sample is a palette
+// ("show value, don't explain it"). Each sample is a palette
 // + a short HOOK that animates in the thumbnail, a `bgQuery` (Pexels search term
 // for the real footage that plays behind the caption), and a ready-to-generate
 // SCRIPT + matching settings. Clicking one ("Make one like this") drops the

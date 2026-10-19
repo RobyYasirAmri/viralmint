@@ -30,7 +30,7 @@ import { takeMeta, voiceUrl } from "./studioApi"
 import { formatClock } from "../../utils/format"
 import { usePlayhead, usePlayheadStore } from "./playheadStore"
 
-// The sequence player (§5.6): one clock drives the visual, the voice, the music
+// The sequence player: one clock drives the visual, the voice, the music
 // bed and the caption overlay, scene by scene. At most two <video> elements
 // exist — the current scene and the next one, preloaded — and React's keyed
 // reconciliation hands the preloaded element over at the boundary.

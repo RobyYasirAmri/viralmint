@@ -22,7 +22,7 @@ import useDocumentTitle from "../hooks/useDocumentTitle"
 import { formatClock, formatRelativeTime } from "../utils/format"
 import { handoffKey, handoffOps, parseLegacyQuery } from "../utils/studioHandoff"
 
-// Studio Home (§5.2) — recent projects + the start panel.
+// Studio Home — recent projects + the start panel.
 // Backed by /api/studio (components/studio/studioApi.js). Route: /stock (the editor is /stock/p/:projectId).
 export default function SmartVideoHome() {
   useDocumentTitle("Smart Video Studio")
@@ -63,7 +63,7 @@ export default function SmartVideoHome() {
   useEffect(() => { refresh() }, [])
 
   // Legacy `/stock?script=|topic=|source=…` links (Library "Use as
-  // inspiration", the Videos page's create menu) become a PROJECT (§9.2):
+  // inspiration", the Videos page's create menu) become a PROJECT:
   // validated, created once (a reload or a double-invoke reuses the id stored
   // under a hash of the query for 10 min), planned, then the editor opens by
   // history.replace so Back doesn't make a second one. `?script=` never

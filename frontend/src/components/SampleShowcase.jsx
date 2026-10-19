@@ -1,6 +1,5 @@
 // SampleShowcase — a vivid, auto-playing strip of "start from a sample" cards
-// that replaces the cold-form first impression on creation pages (PivotPlan
-// §9/§11 — "show value, don't explain it").
+// that replaces the cold-form first impression on creation pages ("show value, don't explain it").
 //
 // Each card layers, bottom → top:
 //   1. a CSS gradient (instant, always paints),
