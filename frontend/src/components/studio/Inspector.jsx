@@ -317,7 +317,7 @@ export function SceneTab({
 
         <Menu anchorEl={replaceAnchor} open={!!replaceAnchor} onClose={() => setReplaceAnchor(null)}>
           <MenuItem onClick={() => { setReplaceAnchor(null); onSearchStock(v.query || v.asset?.query || "") }}>
-            <ListItemText primary="Search stock footage…" secondary="Pexels" />
+            <ListItemText primary="Search stock footage…" secondary="Pexels · Pixabay" />
           </MenuItem>
           <MenuItem onClick={() => { setReplaceAnchor(null); onShowMedia?.() }}>
             <ListItemText primary="Your clips…" secondary="opens the Media tab for this scene" />

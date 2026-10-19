@@ -2,9 +2,11 @@
 # Copyright (c) 2025-2026 ViralMint Contributors
 """Stock footage for the Smart Video Studio — search, plan, normalise.
 
-  * `search_videos` / `search_stock_candidates` / `search_all_scenes` — Pexels
-    candidates with a quality score, a small preview file and an HD download
-    file, cached 24 h (stock_search_cache).
+  * `search_videos` / `search_pixabay_videos` — one provider's candidates,
+    each with a quality score, a small preview file and an HD download file,
+    cached 24 h (stock_search_cache; Pixabay's API terms require it).
+  * `search_stock_candidates` / `search_all_scenes` — every configured
+    provider at once, merged best-first.
   * `extract_visual_scenes` — one AI call that turns timed script chunks into
     one stock search per chunk, IN ORDER (scene N depicts chunk N).
   * `trim_and_normalize_clip` — one ffmpeg pass: cover-crop to the canvas,
@@ -17,6 +19,7 @@ helpers; this module is what the Studio plans and renders with.
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import subprocess
@@ -26,6 +29,7 @@ import httpx
 from backend.core.exceptions import VideoGenerationError
 from backend.core.prompt_rules import extract_json_text
 from backend.services import stock_search_cache
+from backend.services.stock_media import _truncate_query
 from backend.services.ffmpeg_service import ffmpeg_error
 from backend.services.video_utils import cover_vf, orientation_fit_adjustment
 
@@ -154,22 +158,123 @@ async def search_videos(
     return await stock_search_cache.cached_search("pexels", query, _fetch, **cache_params)
 
 
+# ── Pixabay API ────────────────────────────────────────────────────────────────
+
+PIXABAY_API = "https://pixabay.com/api/videos/"
+# Floors sent to the API. Pixabay is almost all landscape, so a portrait render
+# takes landscape footage too (trim_and_normalize_clip cover-crops it) and only
+# the short side is floored; the score still prefers native portrait.
+_PIXABAY_MIN_DIMS = {"landscape": (1280, 720), "portrait": (720, 720)}
+
+
+async def search_pixabay_videos(
+    query: str,
+    orientation: str = "portrait",
+    per_page: int = 10,
+    api_key: str = "",
+) -> list[dict]:
+    """Search Pixabay — same result shape as `search_videos`, ids prefixed
+    `pixabay_` so they never collide with a Pexels id. Cached 24 h."""
+    if not api_key:
+        raise VideoGenerationError("Pixabay API key not configured")
+    min_w, min_h = _PIXABAY_MIN_DIMS.get(orientation, _PIXABAY_MIN_DIMS["landscape"])
+    cache_params = {"orientation": orientation, "per_page": per_page, "min_width": min_w, "min_height": min_h}
+
+    async def _fetch() -> list[dict]:
+        try:
+            resp = await _http.get(PIXABAY_API, params={
+                "key": api_key,
+                "q": _truncate_query(query),         # a `q` over 100 chars is a 400
+                "video_type": "film",                    # real footage, not animation
+                "per_page": max(3, min(per_page, 200)),  # outside 3..200 is a 400
+                "safesearch": "true",
+                "order": "popular",
+                "min_width": min_w,
+                "min_height": min_h,
+            })
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            # The key rides in the URL, and the exception's text carries the URL.
+            raise VideoGenerationError(f"Pixabay search failed ({e.response.status_code})") from None
+        except httpx.HTTPError as e:
+            raise VideoGenerationError(f"Pixabay search failed ({type(e).__name__})") from None
+
+        videos = []
+        for hit in resp.json().get("hits", []):
+            sizes = hit.get("videos") or {}
+            preview = next((v for k in ("tiny", "small", "medium", "large")
+                            if (v := sizes.get(k) or {}).get("url")
+                            and min(v.get("width") or 0, v.get("height") or 0) >= 360), None)
+            best, best_score = None, 0.0
+            for size_key, base in (("large", 100), ("medium", 70), ("small", 30)):
+                v = sizes.get(size_key) or {}
+                w, h = v.get("width") or 0, v.get("height") or 0
+                if not v.get("url") or min(w, h) < 720:
+                    continue
+                score = base + (50 if w <= 1920 and h <= 1920 else 0) + min(w, 1920) / 100
+                score += orientation_fit_adjustment(w, h, orientation)
+                if score > best_score:
+                    best, best_score = v, score
+            if not best:
+                continue
+            duration = hit.get("duration") or 0
+            # Pixabay exposes engagement; log-scaled so it never outweighs fit.
+            popularity = round(min(10.0, math.log10(int(hit.get("views") or 0)
+                                                    + int(hit.get("likes") or 0) * 10 + 1) * 3), 1)
+            videos.append({
+                "id": f"pixabay_{hit['id']}",
+                "url": hit.get("pageURL", ""),
+                "download_url": best["url"],
+                "preview_url": (preview or best)["url"],
+                "width": best.get("width") or 0,
+                "height": best.get("height") or 0,
+                "duration": duration,
+                "quality_score": best_score + min(duration / 5, 10) + popularity,
+                "source": "pixabay",
+                "desc_words": [t.strip() for t in (hit.get("tags") or "").split(",") if t.strip()],
+                "thumbnail": best.get("thumbnail", ""),
+                "creator": hit.get("user", ""),
+            })
+        videos.sort(key=lambda x: x["quality_score"], reverse=True)
+        return videos
+
+    return await stock_search_cache.cached_search("pixabay", query, _fetch, **cache_params)
+
+
+async def _search_providers(query: str, orientation: str, per_page: int,
+                            pexels_api_key: str, pixabay_api_key: str) -> list[dict]:
+    """Every configured provider at once, merged and de-duplicated. A provider
+    that fails costs its share of the pool, never the search."""
+    coros = []
+    if pexels_api_key:
+        coros.append(search_videos(query, orientation=orientation, per_page=per_page, api_key=pexels_api_key))
+    if pixabay_api_key:
+        coros.append(search_pixabay_videos(query, orientation=orientation, per_page=per_page,
+                                           api_key=pixabay_api_key))
+    merged: list[dict] = []
+    seen: set = set()
+    for res in await asyncio.gather(*coros, return_exceptions=True):
+        if isinstance(res, BaseException):
+            logger.warning("Stock search failed for %r: %s", query, res)
+            continue
+        for r in res:
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                merged.append(r)
+    merged.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+    return merged
+
+
 async def search_stock_candidates(
     query: str,
     orientation: str = "landscape",
     pexels_api_key: str = "",
     per_page: int = 10,
+    pixabay_api_key: str = "",
 ) -> list[dict]:
-    """Candidates for ONE query, best-first. A search failure degrades to an
-    empty list (logged), never an exception."""
-    if not pexels_api_key:
-        return []
-    try:
-        return await search_videos(query, orientation=orientation, per_page=per_page,
-                                   api_key=pexels_api_key)
-    except Exception as e:  # noqa: BLE001 — a failed search is "no candidates"
-        logger.warning("Stock candidate search failed for %r: %s", query, e)
-        return []
+    """Merged candidates for ONE query, best-first. A search failure degrades
+    to an empty list (logged), never an exception."""
+    return await _search_providers(query, orientation, per_page, pexels_api_key, pixabay_api_key)
 
 
 async def search_all_scenes(
@@ -177,11 +282,12 @@ async def search_all_scenes(
     orientation: str,
     voice_duration: float,
     pexels_api_key: str,
+    pixabay_api_key: str = "",
 ) -> list[tuple[int, list[dict]]]:
-    """Search Pexels for all scenes in parallel.
+    """Search every configured provider for all scenes in parallel.
 
-    Returns ``[(scene_idx, candidates)]`` — each scene's candidate POOL,
-    heuristic-sorted best-first and truncated to MAX_CANDIDATES_PER_SCENE.
+    Returns ``[(scene_idx, candidates)]`` — each scene's merged candidate
+    POOL, heuristic-sorted best-first and truncated to MAX_CANDIDATES_PER_SCENE.
     Per scene it tries `query`, then `alt1`, then `alt2`, stopping early once
     three candidates are at least as long as the scene needs.
     """
@@ -189,19 +295,13 @@ async def search_all_scenes(
 
     async def _search_scene(i: int, scene: dict) -> tuple[int, list[dict]]:
         queries = [q for q in (scene.get("query"), scene.get("alt1"), scene.get("alt2")) if q]
-        if not queries or not pexels_api_key:
+        if not queries or not (pexels_api_key or pixabay_api_key):
             return i, []
         try:
             all_candidates: list[dict] = []
             seen: set = set()
             for query in queries:
-                try:
-                    results = await search_videos(query, orientation=orientation, per_page=15,
-                                                  api_key=pexels_api_key)
-                except Exception as e:  # noqa: BLE001 — try the next query
-                    logger.warning("Stock search failed for query %r: %s", query, e)
-                    continue
-                for r in results:
+                for r in await _search_providers(query, orientation, 15, pexels_api_key, pixabay_api_key):
                     if r["id"] not in seen:
                         seen.add(r["id"])
                         all_candidates.append(r)

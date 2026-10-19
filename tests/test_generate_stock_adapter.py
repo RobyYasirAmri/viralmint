@@ -62,10 +62,10 @@ def env(monkeypatch):
     state = {"runners": [], "legacy": [], "planned": 0, "renders": [], "warnings": [], "sent": []}
     monkeypatch.setattr(task_runner, "dispatch", state["runners"].append)
     monkeypatch.setattr(task_runner, "dispatch_light", state["runners"].append)
-    monkeypatch.setattr(studio_media, "pexels_key", lambda: "k")
+    monkeypatch.setattr(studio_media, "stock_keys", lambda: ("k", ""))
     monkeypatch.setattr("backend.core.ai_provider.get_ai_client", lambda *a, **k: None)
 
-    async def plan(doc, *, project_id, ai_client, pexels_key, only_uids=None):
+    async def plan(doc, *, project_id, ai_client, pexels_key, pixabay_key="", only_uids=None):
         state["planned"] += 1
         ops = []
         for i, sc in enumerate(doc["scenes"]):

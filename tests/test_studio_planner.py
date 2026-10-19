@@ -44,7 +44,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(task_runner, "dispatch", _RUNNERS.append)
 
     state = {"extract_calls": 0, "on_extract": None, "same_pool": False}
-    monkeypatch.setattr(studio_media, "pexels_key", lambda: "k")
+    monkeypatch.setattr(studio_media, "stock_keys", lambda: ("k", ""))
     monkeypatch.setattr("backend.core.ai_provider.get_ai_client", lambda *a, **k: object())
 
     async def extract(chunks, ai):
@@ -53,7 +53,8 @@ def fakes(monkeypatch):
             await state["on_extract"]()
         return [{"query": f"visual {k}", "alt1": "a", "alt2": "b", "mood": "calm"} for k in range(len(chunks))]
 
-    async def search_all(scenes, orientation, voice_duration, pexels_api_key):
+    async def search_all(scenes, orientation, voice_duration, pexels_api_key, pixabay_api_key=""):
+        state["keys"] = (pexels_api_key, pixabay_api_key)
         if state["same_pool"]:
             return [(k, [cand(1), cand(2)]) for k in range(len(scenes))]
         return [(k, [cand(100 + k * 10 + j) for j in range(7)]) for k in range(len(scenes))]
@@ -152,10 +153,20 @@ def test_a_planned_alternate_can_be_bound(fakes):
     assert bound["asset"]["provider_id"] == alt["provider_id"] and bound["pinned"]
 
 
+def test_a_pixabay_only_install_still_plans_stock(fakes, monkeypatch):
+    from backend.services import studio_media
+
+    monkeypatch.setattr(studio_media, "stock_keys", lambda: ("", "px"))
+    doc = plan(make())
+    assert fakes["keys"] == ("", "px")
+    assert all(s["visual"]["state"] == "bound" for s in doc["scenes"])
+    assert studio_media.NO_KEY_MESSAGE not in fakes["warnings"]
+
+
 def test_without_keys_it_still_plans_with_keywords_and_warns(fakes, monkeypatch):
     from backend.services import studio_media
 
-    monkeypatch.setattr(studio_media, "pexels_key", lambda: "")
+    monkeypatch.setattr(studio_media, "stock_keys", lambda: ("", ""))
 
     def no_client(*_a, **_k):
         raise RuntimeError("no AI key configured")

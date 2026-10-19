@@ -333,7 +333,7 @@ async def render(job_id: str, project_id: str, user_id: str = "local") -> Render
                                f"Scene {i + 1}'s clip is no longer available — it was replaced with a similar one.")
             try:
                 found = await studio_media.search_candidates(project_id, query or sd.FALLBACK_QUERY, aspect)
-            except StudioError as e:              # no Pexels key — say so instead of a generic failure
+            except StudioError as e:              # no stock key — say so instead of a generic failure
                 raise StudioError(f"Scene {i + 1} has no footage yet: {e}") from e
             for candidate in found:
                 if candidate["provider_id"] in tried:

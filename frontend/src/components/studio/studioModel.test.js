@@ -53,6 +53,7 @@ describe("presentation helpers", () => {
   it("stock labels, gradients and aspect CSS", () => {
     expect(stockLabel({ provider: "pexels", creator: "Jo" })).toBe("Pexels · Jo")
     expect(stockLabel({ provider: "pexels" })).toBe("Pexels")
+    expect(stockLabel({ provider: "pixabay", creator: "Mo" })).toBe("Pixabay · Mo")
     expect(hashString("abc")).toBe(hashString("abc"))
     expect(queryGradient("x")).toMatch(/^linear-gradient\(135deg, hsl\(/)
     expect(aspectCss("16:9")).toBe("16 / 9")

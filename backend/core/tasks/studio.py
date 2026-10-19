@@ -227,8 +227,10 @@ async def plan_into_project(project_id: str, user_id: str = "local", *, first_dr
         ai = get_ai_client(await load_user_settings(user_id))
     except Exception:  # noqa: BLE001 — no AI key configured: plan with keywords
         ai = None
+    pexels, pixabay = studio_media.stock_keys()
     ops, warnings = await studio_planner.plan_project(
-        doc, project_id=project_id, ai_client=ai, pexels_key=studio_media.pexels_key(), only_uids=only_uids)
+        doc, project_id=project_id, ai_client=ai, pexels_key=pexels, pixabay_key=pixabay,
+        only_uids=only_uids)
     for message in warnings:
         await ws_manager.send_constraint_warning("studio_plan", message, user_id=user_id)
     # A bed that's on needs a CONCRETE track, or the preview is silent and the

@@ -71,7 +71,7 @@ export function queryGradient(q) {
   return `linear-gradient(135deg, hsl(${h} 38% 34%), hsl(${(h + 40) % 360} 42% 16%))`
 }
 
-export const providerLabel = () => "Pexels"
+export const providerLabel = (provider) => (provider === "pixabay" ? "Pixabay" : "Pexels")
 // "Pexels · Jane Doe" — how a stock candidate is named on tiles and previews.
 export const stockLabel = (asset) =>
   `${providerLabel(asset?.provider)}${asset?.creator ? ` · ${asset.creator}` : ""}`

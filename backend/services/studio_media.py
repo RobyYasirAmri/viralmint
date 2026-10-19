@@ -4,11 +4,11 @@
 
 Three kinds of footage reach a project, and each is trusted differently:
 
-  * Stock candidates. Searched server-side (Pexels, 24 h cache) and
+  * Stock candidates. Searched server-side (Pexels + Pixabay, 24 h cache) and
     REMEMBERED per project, so `bind_visual` binds the server's own copy of a
     result, never a URL the client made up. After a backend restart that
     memory is empty; a candidate is then accepted only if it is a well-formed
-    Pexels candidate whose URLs are on the Pexels hosts. Every download
+    candidate whose URLs are on its provider's hosts. Every download
     (preview now, render later) is limited to those hosts, with each redirect
     hop re-checked — a document can't make the backend fetch anything else.
   * Stock previews. The small variant, downloaded once into
@@ -37,13 +37,14 @@ from backend.core.exceptions import StudioMediaError
 
 logger = logging.getLogger(__name__)
 
-STOCK_PROVIDERS = ("pexels",)
+STOCK_PROVIDERS = ("pexels", "pixabay")
 # Hosts stock media is fetched from. Pexels serves files from videos.pexels.com
-# (older links go through Vimeo's CDN).
+# (older links go through Vimeo's CDN); Pixabay from cdn.pixabay.com.
 ALLOWED_STOCK_HOSTS = (
     "videos.pexels.com", "images.pexels.com", "player.vimeo.com", "vod-progressive.akamaized.net",
+    "cdn.pixabay.com", "pixabay.com",
 )
-LICENSES = {"pexels": "Pexels License"}
+LICENSES = {"pexels": "Pexels License", "pixabay": "Pixabay Content License"}
 PREVIEW_MAX_BYTES = 60 * 1024 * 1024
 STOCK_MAX_BYTES = 250 * 1024 * 1024      # a full-size stock clip (render, B-roll, backgrounds)
 MAX_REDIRECTS = 3
@@ -55,7 +56,7 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 UPLOAD_MAX_BYTES = 600 * 1024 * 1024
 
 _ASSET_ID_RE = re.compile(r"^as_[0-9a-f]{16}$")
-_PREVIEW_NAME_RE = re.compile(r"^pexels_[A-Za-z0-9]{1,40}\.mp4$")
+_PREVIEW_NAME_RE = re.compile(r"^(pexels|pixabay)_[A-Za-z0-9]{1,40}\.mp4$")
 
 
 # ── hosts ───────────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ def orientation(aspect_ratio: str) -> str:
 
 def candidate_from_result(result: dict, query: str) -> dict | None:
     provider = result.get("source")
-    provider_id = str(result.get("id") or "")
+    provider_id = str(result.get("id") or "").removeprefix("pixabay_")
     download = result.get("download_url")
     if provider not in STOCK_PROVIDERS or not re.fullmatch(r"[A-Za-z0-9]{1,40}", provider_id) \
             or not is_allowed_stock_url(download):
@@ -149,11 +150,17 @@ def resolve_candidate_for(project_id: str):
 
 
 QUERY_MAX = 100
-NO_KEY_MESSAGE = "Add a Pexels API key (PEXELS_API_KEY) to search stock footage — or use your own clips."
+NO_KEY_MESSAGE = ("Add a Pexels or Pixabay API key (PEXELS_API_KEY / PIXABAY_API_KEY) "
+                  "to search stock footage — or use your own clips.")
 
 
-def pexels_key() -> str:
-    return settings.PEXELS_API_KEY or ""
+def stock_keys() -> tuple[str, str]:
+    """(pexels, pixabay) keys the Studio searches with. A provider pinned by
+    STOCK_MEDIA_PROVIDER leaves the other one out."""
+    from backend.services.stock_media import StockProvider, configured_providers
+    on = configured_providers()
+    return ((settings.PEXELS_API_KEY or "").strip() if StockProvider.PEXELS in on else "",
+            (settings.PIXABAY_API_KEY or "").strip() if StockProvider.PIXABAY in on else "")
 
 
 async def search_candidates(project_id: str, query: str, aspect_ratio: str = "9:16") -> list[dict]:
@@ -162,10 +169,11 @@ async def search_candidates(project_id: str, query: str, aspect_ratio: str = "9:
     q = " ".join((query or "").split())[:QUERY_MAX].strip()
     if len(q) < 2:
         raise StudioMediaError("Type at least two letters to search.")
-    if not pexels_key():
+    pexels, pixabay = stock_keys()
+    if not pexels and not pixabay:
         raise StudioMediaError(NO_KEY_MESSAGE)
     results = await search_stock_candidates(q, orientation=orientation(aspect_ratio),
-                                            pexels_api_key=pexels_key(), per_page=12)
+                                            pexels_api_key=pexels, pixabay_api_key=pixabay, per_page=12)
     candidates = [c for c in (candidate_from_result(r, q) for r in results) if c][:12]
     remember(project_id, candidates)
     return candidates

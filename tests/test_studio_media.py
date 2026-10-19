@@ -80,7 +80,7 @@ def _fake_search(monkeypatch, seen):
         seen.append((q, kw))
         return [PEXELS, {**PEXELS, "id": 7, "download_url": "https://evil.example/x.mp4"}]
 
-    monkeypatch.setattr(sm, "pexels_key", lambda: "k")
+    monkeypatch.setattr(sm, "stock_keys", lambda: ("k", ""))
     monkeypatch.setattr(stock_video_service, "search_stock_candidates", fake_search)
 
 
@@ -103,7 +103,7 @@ def test_search_trims_the_query_to_the_limit(monkeypatch):
 
 
 def test_search_needs_two_letters(monkeypatch):
-    monkeypatch.setattr(sm, "pexels_key", lambda: "k")
+    monkeypatch.setattr(sm, "stock_keys", lambda: ("k", ""))
     with pytest.raises(StudioMediaError, match="at least two letters"):
         asyncio.run(sm.search_candidates("p3", " a "))
 
@@ -111,10 +111,12 @@ def test_search_needs_two_letters(monkeypatch):
 def test_search_without_a_key_says_how_to_fix_it(monkeypatch):
     from backend.config import settings
     monkeypatch.setattr(settings, "PEXELS_API_KEY", "")
-    assert sm.pexels_key() == ""
+    monkeypatch.setattr(settings, "PIXABAY_API_KEY", "")
+    assert sm.stock_keys() == ("", "")
     with pytest.raises(StudioMediaError) as err:
         asyncio.run(sm.search_candidates("p3", "coffee"))
-    assert str(err.value) == sm.NO_KEY_MESSAGE and "PEXELS_API_KEY" in sm.NO_KEY_MESSAGE
+    assert str(err.value) == sm.NO_KEY_MESSAGE
+    assert "PEXELS_API_KEY" in sm.NO_KEY_MESSAGE and "PIXABAY_API_KEY" in sm.NO_KEY_MESSAGE
 
 
 def test_pexels_search_exposes_a_small_preview(monkeypatch):
@@ -262,3 +264,49 @@ def test_a_project_id_cannot_escape_the_projects_dir(studio_dir):
     with pytest.raises(StudioMediaError, match="Bad project id"):
         sm.project_assets_dir("../outside")
     assert sm.UPLOAD_MAX_BYTES > 0 and ".png" in sm.IMAGE_SUFFIXES
+
+
+PIXABAY = {"source": "pixabay", "id": "pixabay_12345",
+           "download_url": "https://cdn.pixabay.com/video/2024/01/01/12345-large.mp4",
+           "preview_url": "https://cdn.pixabay.com/video/2024/01/01/12345-tiny.mp4",
+           "thumbnail": "https://cdn.pixabay.com/video/2024/01/01/12345-large.jpg",
+           "creator": "Mo", "duration": 12, "width": 1920, "height": 1080}
+
+
+def test_a_pixabay_result_is_a_candidate_and_binds_after_a_restart():
+    c = sm.candidate_from_result(PIXABAY, "ocean waves")
+    assert c["provider"] == "pixabay" and c["provider_id"] == "12345"
+    assert c["license"] == "Pixabay Content License" and c["preview_url"].endswith("tiny.mp4")
+    # Memory is empty after a restart: a well-formed Pixabay candidate rebuilds.
+    assert sm.resolve_candidate_for("fresh")(c)["download_url"] == PIXABAY["download_url"]
+    assert sm.candidate_from_result({**PIXABAY, "download_url": "https://evil.example/x.mp4"}, "q") is None
+    assert sm.preview_path("pixabay_12345.mp4") is None          # valid name, just not cached
+    assert sm._PREVIEW_NAME_RE.match("pixabay_12345.mp4") and not sm._PREVIEW_NAME_RE.match("vimeo_1.mp4")
+
+
+def test_stock_keys_follow_the_configured_providers(monkeypatch):
+    from backend.config import settings
+    monkeypatch.setattr(settings, "PEXELS_API_KEY", "pk")
+    monkeypatch.setattr(settings, "PIXABAY_API_KEY", " xk ")
+    monkeypatch.setattr(settings, "STOCK_MEDIA_PROVIDER", "auto")
+    assert sm.stock_keys() == ("pk", "xk")
+    monkeypatch.setattr(settings, "STOCK_MEDIA_PROVIDER", "pixabay")
+    assert sm.stock_keys() == ("", "xk")
+    monkeypatch.setattr(settings, "STOCK_MEDIA_PROVIDER", "auto")
+    monkeypatch.setattr(settings, "PEXELS_API_KEY", "")
+    assert sm.stock_keys() == ("", "xk")
+
+
+def test_search_with_only_a_pixabay_key(monkeypatch):
+    from backend.services import stock_video_service
+    seen = []
+
+    async def fake_search(q, **kw):
+        seen.append(kw)
+        return [PIXABAY]
+
+    monkeypatch.setattr(sm, "stock_keys", lambda: ("", "xk"))
+    monkeypatch.setattr(stock_video_service, "search_stock_candidates", fake_search)
+    found = asyncio.run(sm.search_candidates("px1", "ocean waves", "9:16"))
+    assert [c["provider"] for c in found] == ["pixabay"]
+    assert seen[0]["pexels_api_key"] == "" and seen[0]["pixabay_api_key"] == "xk"

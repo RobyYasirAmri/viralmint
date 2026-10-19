@@ -172,7 +172,7 @@ function MediaBin({
             )}
             {!search.loading && !search.error && !search.query && (
               <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 2, textAlign: "center" }}>
-                Search Pexels, click a result to watch it, then Use it for the selected scene.
+                Search stock footage, click a result to watch it, then Use it for the selected scene.
               </Typography>
             )}
             {!search.loading && !search.error && search.query && !search.results.length && (

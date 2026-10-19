@@ -5,7 +5,7 @@
   1. Each scene's line is one timed chunk → `extract_visual_scenes`: one stock
      search per scene, in order, with two fallbacks and a mood (one AI call
      with the user's own key).
-  2. `search_all_scenes` pools Pexels candidates per scene (24 h cache).
+  2. `search_all_scenes` pools Pexels + Pixabay candidates per scene (24 h cache).
   3. `rank_scene_candidates` (one AI call) orders each pool by meaning.
   4. The best candidate is BOUND (no clip used twice when an alternative
      exists) and up to 5 alternates are kept; every candidate is remembered so
@@ -14,7 +14,7 @@
 This module only COMPUTES ops. The runner lands them with the internal
 `plan_result` op, which skips any scene the user pinned, bound their own clip
 to or re-wrote meanwhile. Every degradation — no AI key, an AI failure, no
-Pexels key, a search failure — becomes a warning, never an error: a plan with
+stock key, a search failure — becomes a warning, never an error: a plan with
 keyword queries is still a plan.
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _open(scene: dict) -> bool:
     return bool(scene["line"]) and not sd.is_fixed_visual(scene)
 
 
-async def plan_project(doc: dict, *, project_id: str, ai_client, pexels_key: str,
+async def plan_project(doc: dict, *, project_id: str, ai_client, pexels_key: str, pixabay_key: str = "",
                        only_uids: set[str] | None = None) -> tuple[list[dict], list[str]]:
     from backend.services import clip_rank_service, studio_media
     from backend.services import stock_video_service as svs
@@ -87,10 +87,11 @@ async def plan_project(doc: dict, *, project_id: str, ai_client, pexels_key: str
                       "mood": s.get("mood")} for _, s in spoken]
 
     pools: dict[int, list[dict]] = {}
-    if pexels_key:
+    if pexels_key or pixabay_key:
         try:
             results = await svs.search_all_scenes(
-                extracted, studio_media.orientation(doc["aspect_ratio"]), timeline["total"], pexels_key)
+                extracted, studio_media.orientation(doc["aspect_ratio"]), timeline["total"], pexels_key,
+                pixabay_key)
             pools = {idx: pool for idx, pool in results}
         except Exception:  # noqa: BLE001
             logger.warning("studio plan: stock search failed", exc_info=True)

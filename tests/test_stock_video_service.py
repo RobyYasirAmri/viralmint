@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2025-2026 ViralMint Contributors
-"""The Studio's stock layer: Pexels search + scoring, the per-chunk planner,
+"""The Studio's stock layer: Pexels + Pixabay search and scoring, the per-chunk planner,
 and the one-pass clip normaliser (run under the real ffmpeg — every look's
 filter graph must actually parse, or a whole render ships ungraded)."""
 import json
@@ -212,3 +212,72 @@ def test_bare_normalize_raises_instead_of_passing_a_raw_clip(tmp_path):
     bad.write_bytes(b"not a video")
     with pytest.raises(VideoGenerationError):
         S._bare_normalize(bad, 1.0, 360, 640, tmp_path / "o.mp4")
+
+
+# ── Pixabay ──────────────────────────────────────────────────────────────────
+
+def _pixabay_payload():
+    """Pixabay's library is almost all landscape — what a portrait render gets."""
+    def sizes(i):
+        return {
+            "large": {"url": f"https://cdn.pixabay.com/{i}-large.mp4", "width": 1920, "height": 1080,
+                      "thumbnail": f"https://cdn.pixabay.com/{i}.jpg"},
+            "medium": {"url": f"https://cdn.pixabay.com/{i}-medium.mp4", "width": 1280, "height": 720},
+            "small": {"url": f"https://cdn.pixabay.com/{i}-small.mp4", "width": 960, "height": 540},
+            "tiny": {"url": f"https://cdn.pixabay.com/{i}-tiny.mp4", "width": 640, "height": 360},
+        }
+    return {"hits": [{"id": i, "pageURL": f"https://pixabay.com/videos/x-{i}/", "duration": 10,
+                      "tags": "ocean, waves, beach", "user": "Mo", "views": 1000, "likes": 10,
+                      "videos": sizes(i)} for i in (11, 22)]}
+
+
+async def test_pixabay_portrait_search_keeps_landscape_footage(monkeypatch):
+    get = AsyncMock(return_value=_Resp(_pixabay_payload()))
+    monkeypatch.setattr(S, "_http", MagicMock(get=get))
+    out = await S.search_pixabay_videos("ocean waves " * 20, orientation="portrait", api_key="k")
+    assert [v["id"] for v in out] and all(v["id"].startswith("pixabay_") for v in out)
+    assert out[0]["source"] == "pixabay" and out[0]["download_url"].endswith("-large.mp4")
+    assert out[0]["preview_url"].endswith("-tiny.mp4") and out[0]["desc_words"] == ["ocean", "waves", "beach"]
+    params = get.call_args.kwargs["params"]
+    assert len(params["q"]) <= 100 and params["video_type"] == "film"
+    assert (params["min_width"], params["min_height"]) == (720, 720)
+
+
+async def test_a_failed_pixabay_search_never_carries_the_key(monkeypatch):
+    import httpx
+    url = "https://pixabay.com/api/videos/?key=SECRETKEY&q=x"
+    req = httpx.Request("GET", url)
+    err = httpx.HTTPStatusError("400 for " + url, request=req, response=httpx.Response(400, request=req))
+    resp = MagicMock(raise_for_status=MagicMock(side_effect=err))
+    monkeypatch.setattr(S, "_http", MagicMock(get=AsyncMock(return_value=resp)))
+    with pytest.raises(VideoGenerationError) as e:
+        await S.search_pixabay_videos("x", api_key="SECRETKEY")
+    assert "SECRETKEY" not in str(e.value) and e.value.__cause__ is None and "400" in str(e.value)
+
+
+async def test_candidates_merge_both_providers_and_survive_one_failing(monkeypatch):
+    async def pexels(query, orientation, per_page, api_key):
+        return [{"id": 1, "quality_score": 5}]
+
+    async def pixabay(query, orientation, per_page, api_key):
+        return [{"id": "pixabay_1", "quality_score": 9}]
+
+    async def down(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(S, "search_videos", pexels)
+    monkeypatch.setattr(S, "search_pixabay_videos", pixabay)
+    out = await S.search_stock_candidates("x", pexels_api_key="p", pixabay_api_key="x")
+    assert [c["id"] for c in out] == ["pixabay_1", 1]
+    assert await S.search_stock_candidates("x", pixabay_api_key="x") == [{"id": "pixabay_1", "quality_score": 9}]
+    monkeypatch.setattr(S, "search_pixabay_videos", down)
+    assert [c["id"] for c in await S.search_stock_candidates("x", pexels_api_key="p", pixabay_api_key="x")] == [1]
+
+
+async def test_search_all_scenes_with_only_a_pixabay_key(monkeypatch):
+    async def pixabay(query, orientation, per_page, api_key):
+        return [{"id": f"pixabay_{query}{i}", "duration": 30, "quality_score": i} for i in range(3)]
+
+    monkeypatch.setattr(S, "search_pixabay_videos", pixabay)
+    res = await S.search_all_scenes([{"query": "a"}], "portrait", 10.0, "", "x")
+    assert [c["id"] for c in res[0][1]] == ["pixabay_a2", "pixabay_a1", "pixabay_a0"]
