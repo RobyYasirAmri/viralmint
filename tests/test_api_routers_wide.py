@@ -400,7 +400,7 @@ class TestGenerate:
                         json={"script": "A short script about cats.",
                               "aspect_ratio": "9:16"})
         assert r.status_code == 200, r.text
-        assert "job_id" in r.json()
+        assert "job_id" in r.json() and "project_id" in r.json()
 
     def test_stock_generation_forwards_the_users_own_images(self, client):
         """The field has to reach the runner. A request body that parses but
@@ -413,7 +413,10 @@ class TestGenerate:
                                                   "/api/media/b.png"]})
         assert r.status_code == 200, r.text
         coro = dispatch.call_args.args[0]
-        assert coro.cr_frame.f_locals["user_images"] == [
+        # A script request is a Smart Video Studio project; the images ride
+        # in the request the job prepares the project from.
+        assert coro.cr_code.co_name == "run_studio_from_legacy"
+        assert coro.cr_frame.f_locals["request"]["user_images"] == [
             "/api/media/a.png", "/api/media/b.png"]
         coro.close()
 
@@ -422,7 +425,7 @@ class TestGenerate:
         with patch("backend.core.task_runner.dispatch") as dispatch:
             client.post("/api/generate/stock", json={"script": "Cats."})
         coro = dispatch.call_args.args[0]
-        assert coro.cr_frame.f_locals["user_images"] == []
+        assert coro.cr_frame.f_locals["request"]["user_images"] == []
         coro.close()
 
     def test_stock_generation_rejects_an_unbounded_pile_of_images(self, client):

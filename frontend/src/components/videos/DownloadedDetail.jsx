@@ -188,7 +188,7 @@ export default function DownloadedDetail({ video, onUseAsInspiration, onClose, o
                   } catch (e) { showSnackbar(e.response?.data?.detail || e.message, "error") }
                 }}
                 sx={{ fontWeight: 700 }}>
-                Quick Stock Video
+                Quick Smart Video
               </Button>
               <Button variant="outlined" size="small"
                 startIcon={<ContentCutIcon />}

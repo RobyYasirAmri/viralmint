@@ -44,6 +44,8 @@ class StockGenerateRequest(BaseModel):
     music_enabled: bool = True
     music_genre: str = "lofi"
     source_id: Optional[str] = None
+    # Accepted for older callers and ignored: the Studio plans its own scenes
+    # (one per line group, with real stock bound to each).
     scenes: Optional[list[StockScene]] = None
     start_image: Optional[str] = None
     # The user's own stills. Each claims a scene in order from the hook; the
@@ -92,13 +94,55 @@ async def _dispatch_generate(*, source_id, custom_script, **kwargs) -> dict:
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+async def _dispatch_smart_video_render(body: StockGenerateRequest) -> dict:
+    """Script → Smart Video Studio project → render v2 (job type `generate`).
+
+    Only the fast part runs in the request: the project is created (a script
+    that doesn't fit is a 400 here, before any job) and claimed, and the job is
+    dispatched. Planning, the caller's stills and music run inside the job
+    (tasks/studio.run_studio_from_legacy)."""
+    from backend.agents.job_helper import create_job
+    from backend.core import task_runner
+    from backend.core.exceptions import StudioConflictError, StudioDocError
+    from backend.core.tasks import studio as studio_tasks
+    from backend.services import studio_autofill
+    from backend.services import studio_store as store
+
+    try:
+        project_id = await studio_autofill.create_from_legacy(body)
+    except StudioDocError as e:
+        raise HTTPException(400, str(e))
+    try:
+        row = await store.claim_render(project_id)
+    except StudioConflictError as e:
+        raise HTTPException(409, {"code": "already_rendering", "message": str(e)})
+    try:
+        job = await create_job("generate", "local", {"project_id": project_id, "source": "legacy", **(
+            {"source_id": body.source_id} if body.source_id else {})}, title=row.title)
+        task_runner.dispatch(studio_tasks.run_studio_from_legacy(job.id, project_id, body.model_dump(), "local"))
+    except Exception:
+        await store.finish_render(project_id)                 # release the claim — nothing is rendering
+        store.release_render(project_id)
+        raise
+    return {"job_id": job.id, "project_id": project_id}
+
+
 @router.post("/stock")
 async def generate_stock(body: StockGenerateRequest):
-    """Generate a video using Pexels stock footage."""
+    """Generate a Smart Video from a script.
+
+    The request becomes a Smart Video Studio project (planned, voiced,
+    rendered — editable afterwards at /stock/p/<project_id>), answered with
+    `{job_id, project_id}`. A single `start_image` animated as the whole video
+    (without `user_images`) keeps the one-shot pipeline, answered `{job_id}`."""
     await _validate_source(body.source_id)
-    from backend.services.caption_service import style_id_known, unknown_style_message
-    if body.caption_enabled and not await style_id_known(body.caption_style):
+    from backend.services.caption_service import captions_disabled, style_id_known, unknown_style_message
+    if body.caption_enabled and not captions_disabled(body.caption_style) \
+            and not await style_id_known(body.caption_style):
         raise HTTPException(status_code=400, detail=unknown_style_message(body.caption_style))
+
+    if body.user_images or not body.start_image:
+        return await _dispatch_smart_video_render(body)
 
     return await _dispatch_generate(
         source_id=body.source_id,

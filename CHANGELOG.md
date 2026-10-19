@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **Smart Video is now a studio: see every scene and hear every line before
+  you render.** A script becomes a project of scenes. Each one has a voice
+  take you can play, a stock clip you can watch, and a length measured from
+  the take. You can rewrite one line (only that scene is re-voiced), split,
+  merge, reorder or delete scenes, swap a clip for one of five alternates, a
+  new Pexels search or your own upload, and choose to loop, freeze or slow a
+  clip that's shorter than its line. Pick the music track, look, captions,
+  opening title and transition, play the whole sequence with music, then
+  render. The render assembles exactly what's on screen and is checked
+  before it's saved. Projects save as you go, with undo and redo, and you
+  can reopen them from Smart Video Home or from a video in the Library
+  ("Edit in studio"). A first draft voices itself with the free Edge voice;
+  an OpenAI voice records only when you ask, since it uses your key. With
+  your AI key, scene footage is planned per line and each clip choice is
+  re-ranked by meaning, and you can ask for punchier, shorter or clearer
+  rewrites of any line. `POST /api/generate/stock` and MCP's
+  `generate_smart_video` keep their requests and now build a project too,
+  returning its `project_id`. The old one-page Smart Video form is gone.
 - **Drive ViralMint from Claude Code, Codex, Cursor and other AI agents.**
   ViralMint now serves the Model Context Protocol at `/mcp`, so an MCP
   client can scout, download, clip, generate, run the editing tools and
@@ -21,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   MCP tool uploads or publishes anything.
 
 ### Fixed
+- **The free Edge voice works again, and stops dropping lines.** Since
+  Microsoft changed its token (2026-10-13), edge-tts versions older than
+  7.3.0 are refused on every request — the minimum is now 7.3.1. Edge also
+  turns down about two in five connections at random. That used to cost a
+  line or two in most multi-scene videos; it's now retried quietly.
 - **Opening the Library no longer deletes videos.** Listing videos deleted
   any whose file wasn't on disk at that moment — along with its thumbnail —
   so a file that was only briefly unreachable (a sync client mid-move, a

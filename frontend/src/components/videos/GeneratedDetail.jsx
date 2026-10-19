@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Box, Typography, Button, Chip, Stack, Paper, IconButton, Divider,
   Grid, CircularProgress, TextField, Menu, MenuItem, ListItemText, ListItemIcon,
@@ -15,6 +16,7 @@ import ContentCutIcon from "@mui/icons-material/ContentCut"
 import PhotoCameraIcon from "@mui/icons-material/PhotoCamera"
 import WhatshotIcon from "@mui/icons-material/Whatshot"
 import WarningAmberIcon from "@mui/icons-material/WarningAmber"
+import MovieEditIcon from "@mui/icons-material/MovieEdit"
 import http from "../../api/http"
 import useAppStore from "../../store/appStore"
 import { STATUS_COLOR } from "./constants"
@@ -36,6 +38,7 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
   const [regenThumb, setRegenThumb] = useState(false)
   const [draft, setDraft] = useState({})
   const showSnackbar = useAppStore((s) => s.showSnackbar)
+  const navigate = useNavigate()
 
   const handleRegenThumbnail = async () => {
     setRegenThumb(true)
@@ -160,6 +163,14 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
                 onClick={startEditing}>
                 Edit
               </Button>
+              {video.project_id && (
+                // A Smart Video render: its project is still editable —
+                // change a line or a clip and render again.
+                <Button variant="outlined" size="small" startIcon={<MovieEditIcon />}
+                  onClick={() => navigate(`/stock/p/${video.project_id}`)}>
+                  Edit in studio
+                </Button>
+              )}
               <Button variant="outlined" size="small"
                 startIcon={regenThumb ? <CircularProgress size={16} /> : <PhotoCameraIcon />}
                 disabled={regenThumb || !video.video_path}

@@ -35,7 +35,7 @@ export default function CreateModeMenu({ anchorEl, onClose, sourceId, navigate }
         sx={{ borderBottom: 1, borderColor: "divider", mb: 0.5 }}>
         <ListItemIcon><AutoFixHighIcon fontSize="small" color="primary" /></ListItemIcon>
         <ListItemText
-          primary={quickLoading ? "Starting..." : "Quick Stock Video"}
+          primary={quickLoading ? "Starting..." : "Quick Smart Video"}
           secondary="One-click: Pexels stock footage + free voice + viral captions"
           primaryTypographyProps={{ fontWeight: 700, color: "primary.main" }}
           secondaryTypographyProps={{ fontSize: "0.7rem" }}
@@ -46,7 +46,7 @@ export default function CreateModeMenu({ anchorEl, onClose, sourceId, navigate }
       </Typography>
       <MenuItem onClick={() => { onClose(); navigate(`/stock?source=${sourceId}`) }}>
         <ListItemIcon><PhotoLibraryIcon fontSize="small" /></ListItemIcon>
-        <ListItemText>Stock Video</ListItemText>
+        <ListItemText>Smart Video</ListItemText>
       </MenuItem>
     </Menu>
   )

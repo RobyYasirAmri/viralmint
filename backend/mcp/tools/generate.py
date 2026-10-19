@@ -165,12 +165,14 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Render a finished short from a script — stock footage + voice + captions + music.
 
-        Runs the whole pipeline in one background job: TTS voiceover →
-        Whisper word timings → Pexels stock clips matched per scene →
-        stitch → music mix → burned-in word-by-word captions → thumbnail →
-        AI-drafted YouTube / TikTok titles and descriptions. Stock search
-        needs a Pexels key in Settings; without usable footage the render
-        degrades to a text-on-background video rather than failing.
+        The script becomes a Smart Video Studio project (editable afterwards
+        in the app at /stock/p/<project_id>) and renders in one background
+        job: the script is split into scenes → one voice take per scene →
+        Pexels stock clips planned per scene → each scene cut to its take →
+        music mix → burned-in word-by-word captions with an opening title →
+        thumbnail → AI-drafted YouTube / TikTok titles and descriptions.
+        Stock search needs a Pexels key (PEXELS_API_KEY); without one, a
+        scene with no image of the user's fails the job with that reason.
 
         Get a script first with generate_script_from_topic (or polish one the
         user wrote with polish_script).
@@ -191,7 +193,7 @@ def register(mcp: FastMCP) -> None:
             caption_style: Caption preset id — built-in viral (default),
                 classic, bold, brainrot, neon, minimal, karaoke, glow, urban,
                 warm, mono, or a custom preset id from list_caption_styles.
-                An unknown id renders as "viral"; to turn captions off use
+                An unknown id is refused (400); to turn captions off use
                 caption_enabled=False.
             music_enabled: False skips background music.
             music_genre: lofi (default), cinematic, upbeat, ambient,
@@ -200,8 +202,10 @@ def register(mcp: FastMCP) -> None:
                 the genre another track is used and a warning is sent.
             visual_style: Optional footage mood: cinematic, vlog, card,
                 educational, documentary, noir, neon, vintage.
-            transition_style: Optional scene transition: auto (default
-                dissolve), none (hard cuts), fade, slide, zoom, whip.
+            transition_style: Optional scene transition: none (default,
+                hard cuts), smooth (crossfade), dynamic (sweep) or punchy
+                (dip to black). The older names auto/fade → smooth,
+                slide/zoom → dynamic, whip → punchy.
             user_images: Up to 12 of the user's own stills (local paths or
                 /api/media/<name> references). Each claims one scene in
                 order from the first; the remaining scenes use stock.
@@ -210,8 +214,9 @@ def register(mcp: FastMCP) -> None:
                 stock. Ignored when user_images is given.
 
         Returns:
-            {"job_id": str}. Pair with wait_for_job (several minutes is
-            normal); the finished video appears in list_videos
+            {"job_id": str, "project_id": str} — project_id is absent only
+            for the start_image path. Pair with wait_for_job (a minute or
+            two is normal); the finished video appears in list_videos
             (status="ready") with its file path and drafted metadata.
         """
         if not (script or "").strip():

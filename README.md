@@ -236,7 +236,7 @@ Every key can be set in `.env` *or* per-user inside the app under **Settings** �
                      │            React 18 + MUI 7 SPA                │
                      │       (served by FastAPI in production)        │
                      │  Chat · Scout · Channels · Library             │
-                     │  Stock Video · Clip Studio · Motion Graphics   │
+                     │  Smart Video · Clip Studio · Motion Graphics   │
                      │  Tools · Messaging · Settings                  │
                      └─────────────────┬──────────────────────────────┘
                                        │  HTTP + WebSocket
@@ -348,7 +348,7 @@ ViralMint/
 │
 ├── frontend/
 │   └── src/
-│       ├── pages/                  # Chat · Scout · Channels · Library · Stock Video ·
+│       ├── pages/                  # Chat · Scout · Channels · Library · Smart Video ·
 │       │                           #   Clip Studio · Motion Graphics · Tools · Messaging · MCP
 │       ├── components/             # Reusable UI (chat, settings, videos, …)
 │       ├── hooks/                  # WebSocket, settings, jobs, source video
