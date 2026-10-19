@@ -104,8 +104,8 @@ def _p(key: str, label: str, media: str, origin: str) -> Producer:
 PRODUCERS: dict[str, Producer] = {
     # Made here, from nothing you already owned.
     # `smart_video` is the fallback for a GeneratedVideo with no source_type —
-    # the Stock Video pipeline predates the column.
-    "smart_video": _p("smart_video", "Stock Video", MEDIA_VIDEO, ORIGIN_CREATED),
+    # the one-shot Smart Video pipeline predates the column.
+    "smart_video": _p("smart_video", "Smart Video", MEDIA_VIDEO, ORIGIN_CREATED),
     "motion_graphics": _p("motion_graphics", "Motion Graphics", MEDIA_VIDEO, ORIGIN_CREATED),
     "tool:voiceover": _p("tool:voiceover", "Voice-over", MEDIA_AUDIO, ORIGIN_CREATED),
 
@@ -163,6 +163,8 @@ NON_LIBRARY_JOB_TYPES = frozenset({
     "motion_compose",    # authors a composition, renders nothing
     "upload",            # publishes an existing video, produces no new file
     "tool:hook_analysis",  # structured text on the job row, no file
+    "studio_plan",       # edits a Smart Video project; the render is the item
+    "studio_voice",      # voice takes live in the Studio's take cache
 })
 
 # ⚠️ `download` is deliberately NOT in that set even though a download JOB

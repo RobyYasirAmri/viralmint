@@ -322,9 +322,9 @@ def default_settings(**overrides: Any) -> dict:
             "voice": DEFAULT_VOICES[TTSProvider.EDGE_TTS],
             "label": "Andrew", "model": None, "instructions": None,
         },
-        # `pop` + the hook title: big 3-word captions and the first line as an
+        # `urban` + the hook title: bold 3-word captions and the first line as an
         # on-screen title for its first seconds.
-        "captions": {"enabled": True, "style": "pop", "hook": True, "hook_text": None},
+        "captions": {"enabled": True, "style": "urban", "hook": True, "hook_text": None},
         "music": {
             "enabled": True, "source": "library", "track": None, "track_name": None,
             "genre": "lofi", "volume_db": -14.0, "offset_s": 0.0, "fade_s": 0.5,
@@ -548,7 +548,12 @@ def _settings(raw: Any) -> dict:
         raise StudioDocError("the project has no settings")
     base = default_settings()
     voice_raw = raw.get("voice") if isinstance(raw.get("voice"), dict) else {}
-    provider = normalise_tts_provider(voice_raw.get("provider")) or base["voice"]["provider"]
+    provider = normalise_tts_provider(voice_raw.get("provider"))
+    if provider is None:
+        # An unsupported provider gives way to the free default voice WHOLE:
+        # keeping its voice id would have Edge asked to speak as, say, a
+        # cloned-voice id — every take would fail.
+        provider, voice_raw = base["voice"]["provider"], dict(base["voice"])
     captions_raw = raw.get("captions") if isinstance(raw.get("captions"), dict) else {}
     music_raw = raw.get("music") if isinstance(raw.get("music"), dict) else {}
     bm = base["music"]

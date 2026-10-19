@@ -962,9 +962,15 @@ async def generate_single_kenburns_clip(
     target_h: int = 1920,
     fps: int = 30,
     normalize: bool = True,
+    grade_filters: list[str] | None = None,
 ) -> Path:
     """Turn ONE still into ONE silent clip of exactly `duration` seconds at
     target_w x target_h, with a Ken Burns move.
+
+    `grade_filters` (stock_video_service._color_grade_filters) gives the still
+    the same colour grade as the stock clips around it — without it a photo
+    sits ungraded between graded footage and reads as pasted in. A grade that
+    won't apply costs the look, never the clip.
 
     The per-scene counterpart to generate_kenburns_video, which owns a whole
     video: this one produces a clip that stitches alongside stock footage, so
@@ -988,16 +994,28 @@ async def generate_single_kenburns_clip(
     def _generate():
         frames = max(1, int(duration * fps))
         effect = random.choice(_KENBURNS_EFFECTS)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(image_path),
-            "-vf", _kenburns_image_vf(effect, frames, target_w, target_h, fps),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-t", str(duration),
-            "-an",
-            str(output_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        base_vf = _kenburns_image_vf(effect, frames, target_w, target_h, fps)
+        vf = base_vf
+        if grade_filters:
+            tail = ",format=yuv420p"
+            vf = (vf[:-len(tail)] if vf.endswith(tail) else vf) + "," + ",".join(grade_filters) + tail
+
+        def run(filtergraph: str):
+            return subprocess.run([
+                "ffmpeg", "-y",
+                "-i", str(image_path),
+                "-vf", filtergraph,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-t", str(duration),
+                "-an",
+                str(output_path),
+            ], capture_output=True, text=True, timeout=180)
+
+        result = run(vf)
+        if result.returncode != 0 and grade_filters:
+            logger.warning("Ken Burns grade failed for %s — retrying without it: %s",
+                           Path(image_path).name, ffmpeg_error(result.stderr, 300))
+            result = run(base_vf)
         if result.returncode != 0 or not output_path.exists():
             raise VideoGenerationError(
                 f"Ken Burns clip failed: {ffmpeg_error(result.stderr, 300)}"

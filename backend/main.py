@@ -14,7 +14,7 @@ from backend.core.logging_config import setup_logging
 from backend.core import plugins
 from backend.database import init_db
 
-from backend.api import captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, library, mcp_settings, media, messaging as messaging_router, music, news, scout, settings as settings_router, templates, tools, tts_preview, videos
+from backend.api import captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, library, mcp_settings, media, messaging as messaging_router, music, news, scout, settings as settings_router, studio, templates, tools, tts_preview, videos
 
 # Initialize logging before anything else
 setup_logging(debug=settings.DEBUG)
@@ -64,6 +64,13 @@ async def _watch_handoff_jobs(poll_seconds: int = 60, watch_ids=None):
             logger.warning(
                 "Handoff watcher: failed %d job(s) whose heartbeat went stale "
                 "(predecessor exited mid-job); %d still draining", swept, len(watched))
+            # A failed predecessor's Studio job may have left scenes
+            # "generating" — settle them now that nothing will land.
+            try:
+                from backend.services.studio_store import settle_orphaned_generating
+                await settle_orphaned_generating()
+            except Exception:
+                logger.warning("Handoff watcher: studio settle failed", exc_info=True)
     logger.info("Handoff watcher: done — all watched jobs terminal or swept")
 
 
@@ -189,6 +196,37 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"Retention sweep failed to start: {e}")
+
+    # Smart Video Studio: scenes a dead process left "generating" go back to a
+    # settled state (or they'd block Render and be skipped by Voice all
+    # forever), then the cache sweep — voice takes no project references,
+    # stale stock previews, interrupted writes, render scratch of a render
+    # that died. Both exist because a process died, so boot is the cadence.
+    try:
+        from backend.core.task_runner import spawn_background
+
+        async def _studio_boot():
+            import logging
+            from backend.services import studio_cache
+            from backend.services.studio_store import settle_orphaned_generating
+            log = logging.getLogger(__name__)
+            try:
+                settled = await settle_orphaned_generating()
+                if settled:
+                    log.info("Studio: settled %d scene(s) left generating by a previous run", settled)
+            except Exception as exc:
+                log.warning(f"Studio settle failed: {exc}")
+            try:
+                removed = await studio_cache.sweep()
+                if any(removed.values()):
+                    log.info("Studio cache sweep: %s", removed)
+            except Exception as exc:
+                log.warning(f"Studio cache sweep failed: {exc}")
+
+        spawn_background(_studio_boot())
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Studio boot tasks failed to start: {e}")
 
     # Ensure SFX directory + generated files exist
     try:
@@ -346,6 +384,7 @@ def create_app() -> FastAPI:
     app.include_router(tts_preview.router, prefix="/api")
     app.include_router(mcp_settings.router, prefix="/api")
     app.include_router(music.router, prefix="/api")
+    app.include_router(studio.router, prefix="/api")
 
     # Load proprietary overlay (no-op if not installed) and register plugin routers.
     # See docs/OVERLAY.md for the contract.

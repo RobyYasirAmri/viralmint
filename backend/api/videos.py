@@ -104,6 +104,7 @@ async def list_videos(
                 "uploaded_platforms": _safe_json(v.uploaded_platforms_json, []),
                 "source_type": v.source_type,
                 "source_downloaded_video_id": v.source_downloaded_video_id,
+                "project_id": v.project_id,
                 "clip_start_seconds": v.clip_start_seconds,
                 "clip_end_seconds": v.clip_end_seconds,
                 "clip_virality_score": v.clip_virality_score,
@@ -158,6 +159,8 @@ async def get_video(video_id: str, db: AsyncSession = Depends(get_db)):
         "has_landscape": bool(v.video_path_landscape),
         "source_type": v.source_type,
         "source_downloaded_video_id": v.source_downloaded_video_id,
+        # The Smart Video Studio project this render came from — "Edit in studio".
+        "project_id": v.project_id,
         "clip_start_seconds": v.clip_start_seconds,
         "clip_end_seconds": v.clip_end_seconds,
         "clip_virality_score": v.clip_virality_score,
