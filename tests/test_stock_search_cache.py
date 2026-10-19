@@ -40,7 +40,8 @@ class TestCacheRoundtrip:
 class TestTtl:
     async def test_expired_entry_is_a_miss(self, monkeypatch):
         await C.put("pexels", "city", [{"id": 1}], per_page=5)
-        monkeypatch.setattr(C.time, "time", lambda: time.time() + C.TTL_SECONDS + 60)
+        later = time.time() + C.TTL_SECONDS + 60       # read BEFORE patching: the lambda must not call the patched time.time
+        monkeypatch.setattr(C.time, "time", lambda: later)
         assert await C.get("pexels", "city", per_page=5) is None
 
     async def test_empty_results_use_short_ttl(self, monkeypatch):
@@ -49,7 +50,8 @@ class TestTtl:
         assert await C.get("pexels", "obscure query", per_page=5) == []
         # After the short empty-TTL it must expire so a transient API failure
         # can't blank a query for a whole day.
-        monkeypatch.setattr(C.time, "time", lambda: time.time() + C.EMPTY_TTL_SECONDS + 60)
+        later = time.time() + C.EMPTY_TTL_SECONDS + 60
+        monkeypatch.setattr(C.time, "time", lambda: later)
         assert await C.get("pexels", "obscure query", per_page=5) is None
 
 
