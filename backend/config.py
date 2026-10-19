@@ -126,6 +126,18 @@ class Settings(BaseSettings):
     def TMP_DIR(self) -> Path:
         return self.STORAGE_ROOT / "tmp"
 
+    # Smart Video Studio: projects/<id>/ (the files a project owns) and
+    # cache/voice/ (voice takes, shared across projects) + cache/preview/
+    # (small stock previews). Swept by services/studio_cache.py.
+    @property
+    def STUDIO_DIR(self) -> Path:
+        return DATA_DIR / "studio"
+
+    # Disposable caches (safe to delete): the stock-search response cache.
+    @property
+    def CACHE_DIR(self) -> Path:
+        return DATA_DIR / "cache"
+
     # ── Motion Graphics (HyperFrames plugin) ──────────
     # The on-demand Node runtime + npm package install here. Deliberately a
     # sibling of storage/ rather than inside it: uninstalling the plugin does

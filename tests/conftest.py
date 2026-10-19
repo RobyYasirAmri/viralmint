@@ -41,3 +41,17 @@ if not os.environ.get("VIRALMINT_DATA_DIR"):
 # Generate a valid Fernet key for all tests
 _TEST_KEY = Fernet.generate_key().decode()
 os.environ.setdefault("ENCRYPTION_KEY", _TEST_KEY)
+
+
+# ── Hermetic stock-search cache ────────────────────────────────────────────
+#
+# The Pexels searcher is cache-through (stock_search_cache, 24 h). Without
+# isolation, searcher unit tests would write junk into the test data dir's
+# cache and flake on cache HITS from earlier tests bypassing their HTTP mocks.
+import pytest as _pytest_for_fixtures  # noqa: E402
+
+
+@_pytest_for_fixtures.fixture(autouse=True)
+def _isolate_stock_search_cache(tmp_path, monkeypatch):
+    from backend.services import stock_search_cache
+    monkeypatch.setattr(stock_search_cache, "_db_path", lambda: tmp_path / "stock_search_cache.db")
