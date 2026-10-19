@@ -263,7 +263,8 @@ def register(mcp: FastMCP) -> None:
 
         Without `custom_script`, the AI (on the user's configured provider
         key) writes an ORIGINAL script from the source's analysis, then the
-        same pipeline as generate_smart_video renders it. With
+        same pipeline as generate_smart_video renders it — a Smart Video
+        Studio project, editable afterwards and linked to this source. With
         `custom_script`, that exact narration is rendered.
 
         Args:
@@ -284,7 +285,8 @@ def register(mcp: FastMCP) -> None:
                 with a Ken Burns zoom/pan as the whole video instead of stock.
 
         Returns:
-            {"job_id": str}. Pair with wait_for_job; the finished video is
+            {"job_id": str}. Pair with wait_for_job (its output carries
+            generated_video_id and project_id); the finished video is
             queryable via list_videos / get_video.
         """
         if not (downloaded_video_id or "").strip():

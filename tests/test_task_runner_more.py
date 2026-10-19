@@ -337,7 +337,8 @@ class TestRunBatchGenerate:
         child = MagicMock(); child.id = "child1"
         gen = MagicMock(); gen.run = AsyncMock()
         with patch("backend.agents.job_helper.create_job", new=AsyncMock(return_value=child)), \
-             patch("backend.agents.generator.GeneratorAgent", return_value=gen):
+             patch("backend.agents.generator.GeneratorAgent", return_value=gen), \
+             patch.object(tr, "_job_outcome", new=AsyncMock(return_value=("success", None))):
             await tr.run_batch_generate(
                 "parent", [{"downloaded_video_id": "v1"}], {"aspect_ratio": "9:16"})
         gen.run.assert_awaited_once()
@@ -360,11 +361,25 @@ class TestRunBatchGenerate:
         gen.run = AsyncMock(side_effect=[None, RuntimeError("second fails")])
         with patch("backend.agents.job_helper.create_job",
                    new=AsyncMock(side_effect=children)), \
-             patch("backend.agents.generator.GeneratorAgent", return_value=gen):
+             patch("backend.agents.generator.GeneratorAgent", return_value=gen), \
+             patch.object(tr, "_job_outcome", new=AsyncMock(return_value=("success", None))):
             await tr.run_batch_generate(
                 "parent", [{"downloaded_video_id": "v1"}, {"downloaded_video_id": "v2"}], {})
         # 1 ok + 1 failed → overall success (not all failed)
         assert _statuses(job_status_spy)[-1] == "success"
+
+    async def test_a_render_that_fails_without_raising_counts_as_failed(self, job_status_spy, ws_spy):
+        """A render records its failure on its own job and RETURNS. Counting
+        "no exception" as success reported a batch of failed renders as done."""
+        child = MagicMock(); child.id = "child1"
+        gen = MagicMock(); gen.run = AsyncMock()
+        with patch("backend.agents.job_helper.create_job", new=AsyncMock(return_value=child)), \
+             patch("backend.agents.generator.GeneratorAgent", return_value=gen), \
+             patch.object(tr, "_job_outcome", new=AsyncMock(return_value=("failed", "Scene 1 has no footage yet"))):
+            await tr.run_batch_generate("parent", [{"downloaded_video_id": "v1"}], {})
+        assert _statuses(job_status_spy)[-1] == "failed"
+        failed = [c.args[0] for c in ws_spy.send.call_args_list if c.args[0].get("type") == "job_failed"]
+        assert failed, "the parent must report the failure"
 
 
 # ── run_news_save ───────────────────────────────────────────────────────────

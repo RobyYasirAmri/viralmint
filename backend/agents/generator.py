@@ -56,6 +56,24 @@ def _script_seconds(estimated) -> int:
 logger = logging.getLogger(__name__)
 
 
+async def _link_job_to_project(job_id: str, project_id: str) -> None:
+    """Record the project on the job row (input_json.project_id) — how a live
+    render is recognised (studio_store.render_job_id) and how a client finds
+    the project behind a `generate` job."""
+    import json as _json
+
+    from backend.models.job import Job
+    try:
+        async with AsyncSessionLocal() as db:
+            job = await db.get(Job, job_id)
+            if job is not None:
+                data = _json.loads(job.input_json or "{}") or {}
+                job.input_json = _json.dumps({**data, "project_id": project_id, "source": "legacy"})
+                await db.commit()
+    except Exception:  # noqa: BLE001 — bookkeeping only
+        logger.debug("could not link job %s to project", job_id[:8], exc_info=True)
+
+
 class GeneratorAgent:
     async def run(
         self,
@@ -130,6 +148,17 @@ class GeneratorAgent:
             # Step 1b: Verify script quality before proceeding
             await ws_manager.send_progress(job_id, 8, "Verifying script quality...", user_id)
             script = await self._verify_script(script)
+
+            # Every script-mode render (Quick Smart Video, batch, /videos/generate,
+            # chat, MCP generate_from_downloaded) renders as a Smart Video Studio
+            # PROJECT with render v2 — the one render path, editable afterwards.
+            # The script was written above exactly as before. A lone start_image
+            # (one still animated as the whole video) stays on this pipeline.
+            if user_images or not start_image:
+                await self._render_in_studio(job_id, script, source, opts, aspect_ratio, user_id,
+                                             visual_style=visual_style, transition_style=transition_style,
+                                             user_images=user_images)
+                return
 
             # Voice + (optional) image-to-video / stock generation
             await ws_manager.send_progress(job_id, 15, f"Generating voiceover ({opts['tts_label']})...", user_id)
@@ -369,6 +398,60 @@ class GeneratorAgent:
             ),
             "words_per_group": self._get_words_per_group(cap_style) if cap_on else 3,
         }
+
+    async def _render_in_studio(self, job_id: str, script: str, source, opts: dict, aspect_ratio: str,
+                                user_id: str, *, visual_style: str | None = None,
+                                transition_style: str | None = None, user_images: list[str] | None = None) -> None:
+        """A script-mode render as a Smart Video Studio project — the same
+        project + render v2 path POST /api/generate/stock uses — on THIS job
+        (type `generate`), so every caller keeps its job id and contract."""
+        from types import SimpleNamespace
+
+        from backend.core.exceptions import StudioConflictError, StudioDocError
+        from backend.core.tasks.studio import _end_job, run_studio_from_legacy
+        from backend.services import studio_autofill
+        from backend.services import studio_store as store
+        from backend.services.caption_service import captions_disabled, style_id_known
+        from backend.services.tts_service import TTSProvider, tts_api_key
+
+        provider = getattr(opts.get("tts_provider"), "value", opts.get("tts_provider")) or "edge_tts"
+        voice = opts.get("tts_voice")
+        if provider == TTSProvider.OPENAI_TTS.value and not tts_api_key(provider):
+            # Same degrade as the one-shot pipeline: the free voice, said out loud.
+            await ws_manager.send_constraint_warning(
+                constraint="tts_fallback", severity="warning", user_id=user_id,
+                message=(f"Your selected voice ({opts.get('tts_label') or 'OpenAI TTS'}) needs an OpenAI API key — "
+                         "the video was narrated with the free Edge voice instead."))
+            provider, voice = TTSProvider.EDGE_TTS.value, None
+        # A saved caption style that no longer exists (a custom preset deleted
+        # since) would make the Studio refuse the render — render it as the
+        # default instead, and say so.
+        caption_style = opts.get("caption_style") or "viral"
+        caption_enabled = bool(opts.get("caption_enabled", True))
+        if caption_enabled and not captions_disabled(caption_style) and not await style_id_known(caption_style):
+            await ws_manager.send_constraint_warning(
+                "caption_style_missing",
+                f"The caption style “{caption_style}” no longer exists — this video uses the default style.",
+                severity="warning", user_id=user_id)
+            caption_style = "viral"
+        request = {
+            "script": script, "aspect_ratio": aspect_ratio,
+            "tts_provider": provider, "tts_voice": voice,
+            "caption_enabled": caption_enabled, "caption_style": caption_style,
+            "music_enabled": bool(opts.get("music_enabled", True)), "music_genre": opts.get("music_genre") or "lofi",
+            "source_id": getattr(source, "id", None),
+            "visual_style": visual_style, "transition_style": transition_style,
+            "user_images": list(user_images or []),
+        }
+        try:
+            project_id = await studio_autofill.create_from_legacy(SimpleNamespace(**request), user_id=user_id)
+            await store.claim_render(project_id, user_id)
+        except (StudioDocError, StudioConflictError) as e:
+            await _end_job(job_id, "generate", "failed", user_id, error=str(e)[:300] or "Couldn't start the render.")
+            return
+        await _link_job_to_project(job_id, project_id)
+        await update_job_status(job_id, "running", 10, "Planning scenes")
+        await run_studio_from_legacy(job_id, project_id, request, user_id)
 
     def _preflight_check(self, opts: dict) -> list[str]:
         """Validate required API keys/config before starting the pipeline."""

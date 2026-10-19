@@ -395,9 +395,12 @@ class TestRun:
                           AsyncMock(return_value=meta)), \
              patch("backend.services.thumbnail_service.generate_ai_thumbnail",
                    AsyncMock(return_value=None)):
+            # A lone start_image is the one request the one-shot pipeline
+            # still renders (every other script goes to the Studio).
             await GeneratorAgent().run(
                 job_id="g2", downloaded_video_id=None, custom_script=script,
                 caption_enabled=False, music_enabled=False, user_id="local",
+                start_image="/tmp/still.png",
             )
         # A GeneratedVideo row was added and committed.
         session.add.assert_called_once()
@@ -407,6 +410,71 @@ class TestRun:
         assert gv.gen_tier == "free"
         assert gv.status == "ready"
         assert ujs.await_args_list[-1].args[1] == "success"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kwargs", [{}, {"user_images": ["/api/media/a.png"], "start_image": "/tmp/s.png"}])
+    async def test_a_script_renders_as_a_studio_project(self, kwargs):
+        """Quick Smart Video, batch, /videos/generate, chat and MCP all reach
+        here: after the script is written, the render is a Studio project."""
+        factory, _ = _session_cm([_result_scalar_one(None)])
+        script = "A script written for the studio path, long enough to pass."
+        handoff = AsyncMock()
+        with patch.object(gen_mod, "AsyncSessionLocal", factory), \
+             patch.object(gen_mod, "update_job_status", AsyncMock()), \
+             patch.object(gen_mod.ws_manager, "send", AsyncMock()), \
+             patch.object(gen_mod.ws_manager, "send_progress", AsyncMock()), \
+             patch.object(GeneratorAgent, "_render_in_studio", handoff), \
+             patch.object(GeneratorAgent, "_generate_voice", AsyncMock()) as voice:
+            await GeneratorAgent().run(job_id="g4", downloaded_video_id=None, custom_script=script,
+                                       user_id="local", visual_style="noir", **kwargs)
+        handoff.assert_awaited_once()
+        args, kw = handoff.await_args.args, handoff.await_args.kwargs
+        assert args[0] == "g4" and args[1] == script
+        assert kw["visual_style"] == "noir" and kw["user_images"] == kwargs.get("user_images")
+        voice.assert_not_awaited()          # the one-shot pipeline never ran
+
+    @pytest.mark.asyncio
+    async def test_the_handoff_builds_the_request_and_degrades_honestly(self, monkeypatch):
+        """OpenAI TTS without a key falls back to Edge (said out loud), a
+        deleted caption preset renders as the default (said out loud), and
+        the job is linked to its project before the render runs."""
+        from backend.services import studio_autofill, studio_store
+        from backend.core.tasks import studio as studio_tasks
+        from backend.services.tts_service import TTSProvider
+        captured = {}
+
+        async def create(body, user_id="local"):
+            captured["body"] = body
+            return "proj-1"
+
+        warnings = []
+        monkeypatch.setattr(studio_autofill, "create_from_legacy", create)
+        monkeypatch.setattr(studio_store, "claim_render", AsyncMock())
+        monkeypatch.setattr(gen_mod, "_link_job_to_project", AsyncMock())
+        monkeypatch.setattr(gen_mod, "update_job_status", AsyncMock())
+        run = AsyncMock()
+        monkeypatch.setattr(studio_tasks, "run_studio_from_legacy", run)
+        monkeypatch.setattr(gen_mod.ws_manager, "send_constraint_warning",
+                            AsyncMock(side_effect=lambda *a, **k: warnings.append(k.get("constraint") or a[0])))
+        monkeypatch.setattr("backend.services.tts_service.settings.OPENAI_API_KEY", "")
+
+        async def known(style, **_):
+            return style != "deleted_preset"
+        monkeypatch.setattr("backend.services.caption_service.style_id_known", known)
+        source = MagicMock(); source.id = "dv-9"
+        opts = {"tts_provider": TTSProvider.OPENAI_TTS, "tts_voice": "nova", "tts_label": "OpenAI TTS",
+                "caption_style": "deleted_preset", "caption_enabled": True, "music_enabled": False, "music_genre": "jazz"}
+        await GeneratorAgent()._render_in_studio("g5", "Script.", source, opts, "16:9", "local",
+                                                 visual_style="vlog", transition_style="smooth",
+                                                 user_images=["/api/media/x.png"])
+        body = captured["body"]
+        assert (body.tts_provider, body.tts_voice) == ("edge_tts", None)
+        assert body.caption_style == "viral" and body.source_id == "dv-9" and body.aspect_ratio == "16:9"
+        assert body.user_images == ["/api/media/x.png"] and body.music_genre == "jazz"
+        assert set(warnings) == {"tts_fallback", "caption_style_missing"}
+        gen_mod._link_job_to_project.assert_awaited_once_with("g5", "proj-1")
+        run.assert_awaited_once()
+        assert run.await_args.args[:2] == ("g5", "proj-1")
 
     @pytest.mark.asyncio
     async def test_video_generation_failure_fails_job(self):
@@ -420,8 +488,11 @@ class TestRun:
                           AsyncMock(return_value=Path("/nonexistent/voice.mp3"))), \
              patch.object(GeneratorAgent, "_generate_video",
                           AsyncMock(return_value=None)):
+            # A lone start_image is the one request the one-shot pipeline
+            # still renders (every other script goes to the Studio).
             await GeneratorAgent().run(
                 job_id="g3", downloaded_video_id=None, custom_script=script,
                 caption_enabled=False, music_enabled=False, user_id="local",
+                start_image="/tmp/still.png",
             )
         assert ujs.await_args_list[-1].args[1] == "failed"

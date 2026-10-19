@@ -1822,6 +1822,15 @@ def spawn_background(coro) -> asyncio.Task:
     return task
 
 
+async def _job_outcome(job_id: str) -> tuple[str | None, str | None]:
+    """(status, error_message) of a job row, or (None, None) if it's gone."""
+    from backend.database import AsyncSessionLocal
+    from backend.models.job import Job
+    async with AsyncSessionLocal() as db:
+        job = await db.get(Job, job_id)
+        return (job.status, job.error_message) if job is not None else (None, None)
+
+
 async def run_batch_generate(
     job_id: str,
     items: list[dict],
@@ -1888,6 +1897,12 @@ async def run_batch_generate(
                 custom_script=merged.get("custom_script"),
                 start_image=merged.get("start_image"),
             )
+            # A render that fails records it on its job and RETURNS — it
+            # doesn't raise — so the item's outcome is its job's final status,
+            # not "no exception" (that counted failed renders as successes).
+            child_status, child_error = await _job_outcome(child_job.id)
+            if child_status != "success":
+                raise RuntimeError(child_error or f"the render ended {child_status}")
             succeeded.append({"index": idx, "child_job_id": child_job.id, "video_id": vid_id})
             logger.info("BATCH item %d/%d succeeded | child=%s", idx + 1, total, child_job.id[:8])
         except Exception as e:

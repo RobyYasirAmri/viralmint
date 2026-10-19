@@ -22,9 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   an OpenAI voice records only when you ask, since it uses your key. With
   your AI key, scene footage is planned per line and each clip choice is
   re-ranked by meaning, and you can ask for punchier, shorter or clearer
-  rewrites of any line. `POST /api/generate/stock` and MCP's
-  `generate_smart_video` keep their requests and now build a project too,
-  returning its `project_id`. The old one-page Smart Video form is gone.
+  rewrites of any line. Every other way of making a Smart Video builds a
+  project too and keeps its request: `POST /api/generate/stock` (now also
+  returning `project_id`), a video made from a download (Quick Smart Video,
+  batch generate), chat, and MCP's `generate_smart_video` /
+  `generate_from_downloaded` / `batch_generate` — so each of them is editable
+  afterwards and remembers the video it was made from. The old one-page
+  Smart Video form is gone.
 - **Drive ViralMint from Claude Code, Codex, Cursor and other AI agents.**
   ViralMint now serves the Model Context Protocol at `/mcp`, so an MCP
   client can scout, download, clip, generate, run the editing tools and
@@ -39,6 +43,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   MCP tool uploads or publishes anything.
 
 ### Fixed
+- **A batch of videos no longer reports failed renders as done.** A render
+  that failed recorded it on its own job without raising an error, and the
+  batch counted "no error" as success — a batch where every video failed
+  could finish as "Generated 3/3 videos". Each video's own result is read
+  now.
 - **The free Edge voice works again, and stops dropping lines.** Since
   Microsoft changed its token (2026-10-13), edge-tts versions older than
   7.3.0 are refused on every request — the minimum is now 7.3.1. Edge also
