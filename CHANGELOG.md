@@ -29,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `generate_from_downloaded` / `batch_generate` — so each of them is editable
   afterwards and remembers the video it was made from. The old one-page
   Smart Video form is gone.
+- **Stock video no longer depends on a single provider.** Pexels and Pixabay
+  now sit behind the same pipeline, so stock-video mode works with either
+  key: set `PIXABAY_API_KEY` and the mode renders as before, and a provider
+  that is down or finds no match hands the query to the next configured one.
+  Each provider maps its own response into one internal clip shape, so scene
+  selection, duration matching and rendering are unchanged, and an install
+  with only `PEXELS_API_KEY` still prefers Pexels. `STOCK_MEDIA_PROVIDER`
+  pins one provider if you would rather it never fall back.
 - **Drive ViralMint from Claude Code, Codex, Cursor and other AI agents.**
   ViralMint now serves the Model Context Protocol at `/mcp`, so an MCP
   client can scout, download, clip, generate, run the editing tools and
