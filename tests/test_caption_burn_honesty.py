@@ -83,6 +83,11 @@ class TestExtractClipsTellsTheUser:
     fail silently."""
 
     async def _run(self, clips, ws_spy):
+        # Imported BEFORE the session patch below: a module first imported
+        # while `backend.database.AsyncSessionLocal` is patched binds the mock
+        # for the rest of the session (job_helper did — every later
+        # create_job returned a job with no id).
+        import backend.agents.job_helper  # noqa: F401
         from backend.services.clip_options import ExtractOptions
         video = MagicMock(); video.title = "Src"
         cm, _ = _fake_session_cm(scalar_return=video)

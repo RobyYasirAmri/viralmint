@@ -400,7 +400,11 @@ _SCRIPT_RANGES: list[tuple[str, tuple[tuple[int, int], ...]]] = [
 # DirectWrite / fontconfig at burn time.
 _SCRIPT_FONTS: dict[str, dict[str, str]] = {
     "darwin": {
-        "han": "PingFang SC", "kana": "Hiragino Sans", "hangul": "Apple SD Gothic Neo",
+        # Not "PingFang SC": current macOS ships it as a system asset that
+        # fontconfig (libass's font lookup in ffmpeg) can't see, so every
+        # Chinese caption burned as tofu boxes. Hiragino Sans GB is a regular
+        # system font with Simplified Chinese, Japanese and Korean coverage.
+        "han": "Hiragino Sans GB", "kana": "Hiragino Sans", "hangul": "Apple SD Gothic Neo",
         "arabic": "Geeza Pro", "hebrew": "Arial Hebrew",
         "devanagari": "Kohinoor Devanagari", "thai": "Thonburi",
     },
@@ -764,14 +768,14 @@ def _build_ass_header(
     # Hook style: top-center, bold, big, white with thick black outline. Sized
     # ~2.2x caption font so it reads as the scroll-stopper even on bright
     # backgrounds. Alignment=8 is top-center in ASS numbering.
-    hook_font_size = int(font_size * 2.2)
+    hook_size = hook_font_size(style, aspect_ratio)
     # Alignment=8 makes this a TOP margin, so it clears the status bar / tab
     # row rather than the bottom chrome.
     hook_margin_v = 200 if aspect_ratio == "9:16" else 80
     if respect_safe_zone:
         hook_margin_v = max(hook_margin_v, safe_zones.min_margin_top(aspect_ratio, height, platform, 6))
     hook_style_line = (
-        f"Style: Hook,{style['font']},{hook_font_size},&H00FFFFFF,&H000000FF,"
+        f"Style: Hook,{style['font']},{hook_size},&H00FFFFFF,&H000000FF,"
         f"&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,40,40,{hook_margin_v},1\n"
     ) if include_hook_style else ""
 
@@ -813,20 +817,62 @@ def _sanitize_hook_text(raw: str) -> str:
     return text[:cut].rstrip(" ,;:.") + "…"
 
 
-def _build_hook_event(hook_text: str, hook_duration: float, font: str | None = None) -> str:
-    """Return a single ASS Dialogue line rendering the hook at top-center
-    with fade-in/fade-out. Returns empty string if hook_text is blank."""
+def hook_font_size(style: dict, aspect_ratio: str) -> int:
+    """The opening title's font size — one formula for the header's Hook style
+    and the line-capacity wrap below (~2.2x the caption size)."""
+    font_size = style["font_size_portrait"] if aspect_ratio == "9:16" else style["font_size_landscape"]
+    return int(font_size * 2.2)
+
+
+def _is_wide(ch: str) -> bool:
+    """A full-width (CJK / kana / hangul / full-width form) character."""
+    o = ord(ch)
+    return (0x2E80 <= o <= 0x9FFF or 0xAC00 <= o <= 0xD7AF or 0xF900 <= o <= 0xFAFF
+            or 0xFF00 <= o <= 0xFFEF or 0x3000 <= o <= 0x303F)
+
+
+def _wrap_spaceless_title(text: str, capacity_em: float) -> str:
+    """Hard-break (ASS `\\N`) a title's space-free runs that are wider than the
+    frame. libass wraps only at spaces, so a Chinese/Japanese title — the auto
+    title of a CJK script is its whole first clause — burned as ONE line at the
+    title size and ran off both edges. Latin text keeps wrapping at its spaces;
+    widths are estimated (wide glyph ≈ 1 em, others ≈ 0.55 em)."""
+    if capacity_em <= 0 or not any(_is_wide(c) for c in text):
+        return text
+    out: list[str] = []
+    run = 0.0
+    for ch in text:
+        if ch == " ":
+            run = 0.0
+            out.append(ch)
+            continue
+        w = 1.0 if _is_wide(ch) else 0.55
+        if run + w > capacity_em and run > 0:
+            out.append("\\N")
+            run = 0.0
+        out.append(ch)
+        run += w
+    return "".join(out)
+
+
+def _build_hook_event(hook_text: str, hook_duration: float, font: str | None = None,
+                      capacity_em: float = 0.0) -> str:
+    """Return a single ASS Dialogue line rendering the hook at top-center,
+    fading out. Returns empty string if hook_text is blank. `capacity_em` is
+    how many title-size ems fit across the frame (0 = don't hard-wrap)."""
     clean = _sanitize_hook_text(hook_text)
     if not clean:
         return ""
+    clean = _wrap_spaceless_title(clean, capacity_em)
     end_s = max(0.5, min(10.0, hook_duration))
     # Format seconds as H:MM:SS.cc (centiseconds)
     centis = int(round(end_s * 100))
     end_ts = f"0:00:{centis // 100:02d}.{centis % 100:02d}"
-    # \fad(in_ms, out_ms) is native ASS fade animation — no FFmpeg filter needed.
+    # No fade-IN: the title must be on the very first frame — it is the
+    # scroll-stopper, and a cover taken from an early frame should carry it.
     if font:
         clean = emojify_ass_text(clean, font)
-    return f"Dialogue: 0,0:00:00.00,{end_ts},Hook,,0,0,0,,{{\\fad(300,500)}}{clean}\n"
+    return f"Dialogue: 0,0:00:00.00,{end_ts},Hook,,0,0,0,,{{\\fad(0,500)}}{clean}\n"
 
 
 # How long a fully-overlapped segment gets at the tail of its own window.
@@ -1147,8 +1193,10 @@ async def generate_captions_ass(
         style_config = {**style_config, "font": fallback_font}
 
     # Built after the font is final: the hook's emoji switch back to it.
+    # The Hook style's side margins are 40 px each.
+    hook_capacity = (resolution[0] - 80) / max(1, hook_font_size(style_config, aspect_ratio))
     hook_event = (
-        _build_hook_event(hook_text, hook_duration, font=style_config["font"])
+        _build_hook_event(hook_text, hook_duration, font=style_config["font"], capacity_em=hook_capacity)
         if hook_text else ""
     )
 

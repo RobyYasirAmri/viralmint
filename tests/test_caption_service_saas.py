@@ -135,7 +135,7 @@ class TestScriptAwareFontFallback:
         import sys
         from backend.services.caption_service import resolve_caption_font
         monkeypatch.setattr(sys, "platform", "darwin")
-        assert resolve_caption_font("Arial Bold", "禁书") == "PingFang SC"
+        assert resolve_caption_font("Arial Bold", "禁书") == "Hiragino Sans GB"
         monkeypatch.setattr(sys, "platform", "win32")
         assert resolve_caption_font("Impact", "禁书") == "Microsoft YaHei"
         monkeypatch.setattr(sys, "platform", "linux")
