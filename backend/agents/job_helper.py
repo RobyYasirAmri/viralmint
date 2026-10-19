@@ -72,13 +72,17 @@ async def _record_job_behavior(job_type: str, user_id: str, input_json: str, out
         logger.debug("behavior-event record failed for job_type=%s", job_type, exc_info=True)
 
 
-async def create_job(job_type: str, user_id: str = "local", input_data: dict = None) -> Job:
-    """Create a new Job row and return it."""
+async def create_job(
+    job_type: str, user_id: str = "local", input_data: dict = None, title: str = None,
+) -> Job:
+    """Create a new Job row and return it. `title` is the human-readable label
+    the Activity panel shows (absent → derived from the job type)."""
     async with AsyncSessionLocal() as db:
         job = Job(
             user_id=user_id,
             job_type=job_type,
             status="pending",
+            title=(title or None) and str(title)[:500],
             input_json=json.dumps(input_data) if input_data else None,
         )
         db.add(job)

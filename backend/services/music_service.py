@@ -22,6 +22,29 @@ logger = logging.getLogger(__name__)
 # Bundled royalty-free music directory
 MUSIC_DIR = settings.STORAGE_ROOT / "music"
 
+LIBRARY_EXTS = frozenset({".mp3", ".wav", ".ogg", ".m4a"})
+
+
+class LibraryPathError(ValueError):
+    """A library filename that is malformed (`forbidden=False`) or resolves
+    outside the music directory (`forbidden=True`)."""
+
+    def __init__(self, message: str, *, forbidden: bool = False):
+        super().__init__(message)
+        self.forbidden = forbidden
+
+
+def library_path(filename: str) -> Path:
+    """Resolve a filename inside MUSIC_DIR, rejecting traversal attempts."""
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise LibraryPathError("Invalid filename")
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    root = MUSIC_DIR.resolve()
+    candidate = (root / filename).resolve()
+    if not candidate.is_relative_to(root):
+        raise LibraryPathError("Access denied", forbidden=True)
+    return candidate
+
 MUSIC_GENRES = {
     "lofi":       "lo-fi chill beats",
     "cinematic":  "dramatic orchestral",
@@ -36,6 +59,23 @@ MUSIC_GENRES = {
     "rnb":        "R&B soul smooth",
     "rock":       "rock energetic guitar",
 }
+
+def extract_genre(filename: str) -> str:
+    """The genre prefix if the filename matches `{genre}_...`, else 'other'."""
+    stem = Path(filename).stem
+    head = stem.split("_", 1)[0].lower() if "_" in stem else ""
+    return head if head in MUSIC_GENRES else "other"
+
+
+def display_name(filename: str) -> str:
+    """Strip the `{genre}_` prefix and turn underscores back into spaces — the
+    name every surface shows for a library track."""
+    stem = Path(filename).stem
+    genre = extract_genre(filename)
+    if genre != "other" and stem.lower().startswith(f"{genre}_"):
+        stem = stem[len(genre) + 1:]
+    return stem.replace("_", " ").strip() or filename
+
 
 # Pixabay royalty-free music search terms
 PIXABAY_GENRE_QUERIES = {
@@ -128,13 +168,15 @@ async def mix_audio(
     # because there effectively wasn't any. -14dB is a clearly-present bed
     # that still sits under speech.
     music_volume_db: float = -14.0,
+    fade_in_s: float = 1.0,
+    fade_out_s: float = 2.0,
 ) -> Path:
     """
     Mix voice + background music using FFmpeg.
     Music is:
     - Lowered to music_volume_db (default -14dB)
-    - Faded in over 1s at start
-    - Faded out over 2s at end
+    - Faded in over fade_in_s at start (default 1s)
+    - Faded out over fade_out_s at end (default 2s)
     - Trimmed to match voice duration
     """
     if output_path is None:
@@ -155,11 +197,16 @@ async def mix_audio(
         # of laying the music underneath it. normalize=0 keeps the voice at its
         # intended full level with the music as a true −20 dB bed; alimiter
         # guards the summed peak against clipping.
-        fade_out_start = max(voice_duration - 2.0, 0)
+        fade_in = max(0.0, float(fade_in_s))
+        fade_out = max(0.0, float(fade_out_s))
+        fade_out_start = max(voice_duration - fade_out, 0)
+        fades = ""
+        if fade_in > 0:
+            fades += f"afade=t=in:d={fade_in:.2f},"
+        if fade_out > 0:
+            fades += f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.2f},"
         filter_complex = (
-            f"[1:a]volume={music_volume_db}dB,"
-            f"afade=t=in:d=1,"
-            f"afade=t=out:st={fade_out_start:.1f}:d=2"
+            f"[1:a]{fades}volume={music_volume_db}dB"
             f"[bg];"
             f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mixraw];"
             f"[mixraw]alimiter=limit=0.95[out]"

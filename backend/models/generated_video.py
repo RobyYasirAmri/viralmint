@@ -55,6 +55,9 @@ class GeneratedVideo(Base):
     # NULL on rows that predate the column. A job-level count cannot say WHICH
     # clips to distrust; this can.
     clip_selection = Column(String(20), nullable=True)
+    # The Smart Video Studio project this render came from (null for every
+    # other source) — the Library's "Edit in studio" opens it.
+    project_id = Column(String(36), nullable=True, index=True)
 
     # Upload tracking
     youtube_video_id = Column(String(50), nullable=True)

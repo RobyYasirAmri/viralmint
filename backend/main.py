@@ -14,7 +14,7 @@ from backend.core.logging_config import setup_logging
 from backend.core import plugins
 from backend.database import init_db
 
-from backend.api import captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, library, mcp_settings, media, messaging as messaging_router, news, scout, settings as settings_router, templates, tools, tts_preview, videos
+from backend.api import captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, library, mcp_settings, media, messaging as messaging_router, music, news, scout, settings as settings_router, templates, tools, tts_preview, videos
 
 # Initialize logging before anything else
 setup_logging(debug=settings.DEBUG)
@@ -345,6 +345,7 @@ def create_app() -> FastAPI:
     app.include_router(messaging_router.router, prefix="/api")
     app.include_router(tts_preview.router, prefix="/api")
     app.include_router(mcp_settings.router, prefix="/api")
+    app.include_router(music.router, prefix="/api")
 
     # Load proprietary overlay (no-op if not installed) and register plugin routers.
     # See docs/OVERLAY.md for the contract.

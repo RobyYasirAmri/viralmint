@@ -63,6 +63,7 @@ async def init_db():
         messaging_config, chat_session, user_profile,
         video_metrics, viral_formula,
         connected_channel, dynamic_template, caption_style,
+        video_project,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -86,6 +87,8 @@ async def init_db():
         await _add_column_if_missing(conn, "generated_videos", "caption_status", "VARCHAR(20)", existing=_cols)
         await _add_column_if_missing(conn, "generated_videos", "metadata_status", "VARCHAR(20)", existing=_cols)
         await _add_column_if_missing(conn, "generated_videos", "clip_selection", "VARCHAR(20)", existing=_cols)
+        # The Smart Video Studio project a render came from ("Edit in studio")
+        await _add_column_if_missing(conn, "generated_videos", "project_id", "VARCHAR(36)", existing=_cols)
         # BYOK: per-user encrypted keys (override .env at runtime)
         await _add_column_if_missing(conn, "user_settings", "ai_provider", "VARCHAR(20)", existing=_cols)
         await _add_column_if_missing(conn, "user_settings", "ai_model", "VARCHAR(100)", existing=_cols)

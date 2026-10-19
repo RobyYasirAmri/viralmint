@@ -85,8 +85,18 @@ async def _stitch_xfade(
     output_path: Path,
     transition: str,
     transition_duration: float,
+    fallback_paths: list[Path] | None = None,
 ) -> Path:
-    """Stitch clips with xfade transitions between them."""
+    """Stitch clips with xfade transitions between them.
+
+    `fallback_paths` — clips to plain-concat if the xfade filtergraph fails.
+    Defaults to `clip_paths`. The sync-safe styled stitcher passes the ORIGINAL
+    (un-padded) clips here: `clip_paths` are freeze-padded copies, so concating
+    THOSE on a fallback would make the video (n-1)×td too long and drift the
+    footage off the voiceover — the exact desync the padding scheme prevents.
+    """
+    concat_paths = fallback_paths or clip_paths
+
     def _run():
         # Probe each clip's duration
         durations = [probe_duration(clip, default=5.0) for clip in clip_paths]
@@ -137,7 +147,7 @@ async def _stitch_xfade(
             concat_file = _tmp("concat.txt")
             concat_file.parent.mkdir(parents=True, exist_ok=True)
             with open(concat_file, "w") as f:
-                for clip in clip_paths:
+                for clip in concat_paths:
                     f.write(f"file '{clip.resolve()}'\n")
             cmd = [
                 "ffmpeg", "-y",
@@ -153,6 +163,82 @@ async def _stitch_xfade(
         return output_path
 
     return await asyncio.to_thread(_run)
+
+
+# Named transition looks for a whole video — the effect and its duration.
+# `stitch_with_style` keeps the output exactly as long as a hard-cut concat,
+# so a voice track timed against the plain clip durations stays in sync.
+TRANSITION_STYLES: dict[str, tuple[str | None, float]] = {
+    "none":    (None, 0.0),          # hard cuts — short-form default
+    "smooth":  ("fade", 0.30),       # gentle crossfade
+    "dynamic": ("smoothleft", 0.40), # directional sweep
+    "punchy":  ("fadeblack", 0.20),  # quick dip-to-black (6 frames @30fps — frame-exact)
+}
+
+
+async def _pad_clip_tail(clip: Path, td: float, out: Path) -> Path:
+    """Freeze-extend a clip's tail by `td` seconds (video-only, re-encode).
+
+    tpad stop_mode=clone always works regardless of source length — no
+    dependency on extra source material existing.
+    """
+    def _run():
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(clip),
+             "-vf", f"tpad=stop_mode=clone:stop_duration={td:.3f}",
+             "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+             str(out)],
+            capture_output=True, text=True, timeout=600,
+        )
+        if r.returncode != 0:
+            raise VideoGenerationError(f"tpad failed: {ffmpeg_error(r.stderr, 300)}")
+    await asyncio.to_thread(_run)
+    return out
+
+
+async def stitch_with_style(
+    clip_paths: list[Path],
+    output_path: Path,
+    style: str = "none",
+) -> Path:
+    """Stitch clips using a named TRANSITION_STYLES entry, sync-safely.
+
+    "none"/unknown → plain concat. Styled → freeze-pad every non-last clip by
+    the style's duration, then xfade: the output duration equals the un-styled
+    concat's, so voice/caption timelines laid over the stitch stay aligned.
+    """
+    effect, td = TRANSITION_STYLES.get(style, (None, 0.0))
+    if not effect or td <= 0 or len(clip_paths) < 2:
+        return await stitch_clips(clip_paths, output_path, transition="none")
+
+    padded: list[Path] = []
+    for i, clip in enumerate(clip_paths):
+        if i == len(clip_paths) - 1:
+            padded.append(clip)
+            continue
+        out = clip.parent / f"{clip.stem}_pad{i:03d}.mp4"
+        try:
+            padded.append(await _pad_clip_tail(clip, td, out))
+        except Exception as e:
+            # Padding failure → fall back to hard cuts rather than shipping a
+            # desynced xfade (offsets assume the padding exists).
+            logger.warning("transition pad failed (%s) — falling back to hard cuts", e)
+            for p in padded:
+                if p not in clip_paths:
+                    p.unlink(missing_ok=True)
+            return await stitch_clips(clip_paths, output_path, transition="none")
+
+    try:
+        # On xfade failure, fall back to concating the ORIGINAL clips (not the
+        # padded copies) so a fallback stays voice-aligned.
+        return await _stitch_xfade(padded, output_path, effect, td, fallback_paths=clip_paths)
+    finally:
+        for p in padded:
+            if p not in clip_paths:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 async def add_audio_to_video(

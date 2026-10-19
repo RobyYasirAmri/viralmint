@@ -86,3 +86,74 @@ def estimate_tts_cost(text: str, provider: TTSProvider) -> float:
     chars = len(text)
     cost_per_1k = PROVIDER_INFO[provider]["cost_1k_chars"]
     return round((chars / 1000) * cost_per_1k, 4)
+
+
+# ── One answer per question about a provider (the Smart Video Studio reads
+#    these; the frontend gets them through GET /api/studio/enums) ───────────
+
+def normalise_tts_provider(value) -> str | None:
+    """The canonical provider id for `value`, or None when it isn't one."""
+    if isinstance(value, TTSProvider):
+        return value.value
+    if not isinstance(value, str):
+        return None
+    try:
+        return TTSProvider(value).value
+    except ValueError:
+        return None
+
+
+def is_paid_per_take(provider) -> bool:
+    """Each synthesis request spends the user's own API key (OpenAI TTS) — a
+    first draft never auto-voices with such a provider; the user clicks."""
+    return normalise_tts_provider(provider) == TTSProvider.OPENAI_TTS.value
+
+
+def uses_heavy_pool(provider) -> bool:
+    """Every provider here is network I/O — none needs the heavy job pool."""
+    return False
+
+
+def provider_traits() -> dict:
+    return {p.value: {"paid_per_take": is_paid_per_take(p), "needs_key": PROVIDER_INFO[p]["needs_key"],
+                      "heavy": uses_heavy_pool(p)} for p in TTSProvider}
+
+
+def tts_api_key(provider) -> str:
+    """The key for a provider that needs one ("" for Edge, or unset) — the
+    same `OPENAI_API_KEY` every other OpenAI TTS caller here reads."""
+    if normalise_tts_provider(provider) != TTSProvider.OPENAI_TTS.value:
+        return ""
+    return settings.OPENAI_API_KEY or ""
+
+
+# CJK-aware narration length estimation. Every "words ÷ 2.5/sec" heuristic
+# breaks on whitespace-free scripts: an 881-character Chinese narration
+# counted as ~1 "word". Ideographic scripts narrate per CHARACTER; the rate
+# below is calibrated from a real render (≈3.6 chars/sec incl. punctuation).
+# Keep in sync with frontend/src/utils/spokenLength.js (same formula).
+_CJK_CHAR_RANGES = (
+    (0x3040, 0x30FF),  # kana
+    (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF),  # han
+    (0xAC00, 0xD7AF),  # hangul
+)
+LATIN_WORDS_PER_SEC = 2.5
+CJK_CHARS_PER_SEC = 3.5
+
+
+def estimate_spoken_seconds(text: str) -> float:
+    """Estimated narration seconds for mixed Latin/CJK text (0 for empty)."""
+    text = (text or "").strip()
+    if not text:
+        return 0.0
+    cjk = 0
+    cur: list[str] = []
+    for ch in text:
+        cp = ord(ch)
+        if any(lo <= cp <= hi for lo, hi in _CJK_CHAR_RANGES):
+            cjk += 1
+            cur.append(" ")
+        else:
+            cur.append(ch)
+    words = len("".join(cur).split())
+    return round(words / LATIN_WORDS_PER_SEC + cjk / CJK_CHARS_PER_SEC, 1)

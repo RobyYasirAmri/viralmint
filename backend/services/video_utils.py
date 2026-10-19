@@ -9,6 +9,39 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def run_ffmpeg(args: list[str], *, timeout: float = 600, binary_stdout: bool = False) -> subprocess.CompletedProcess:
+    """ffmpeg with `args` (an argv list — never a shell), errors only on stderr.
+    `binary_stdout` returns stdout as bytes (e.g. decoded PCM)."""
+    return subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args],
+                          capture_output=True, text=not binary_stdout, timeout=timeout)
+
+
+def orientation_fit_adjustment(w: int, h: int, orientation: str) -> float:
+    """Quality-score adjustment for how well a stock candidate fits the target
+    orientation once cover-cropped.
+
+    The searchers accept ANY orientation (a landscape clip can crop to
+    portrait), but a 1920×1080 file keeps only ~31% of its width for a 9:16
+    canvas and gets upscaled ~1.8×. Adjustment = orientation-match bonus −
+    upscale penalty:
+      * +25 when the file's orientation matches the target
+      * −30 × (upscale_factor − 1), capped at −60
+
+    For a portrait (1080×1920) target: 1080×1920 → +25, 720×1280 → +10,
+    1920×1080 → −23.3.
+    """
+    if w <= 0 or h <= 0:
+        return 0.0
+    if orientation == "portrait":
+        tw, th = 1080, 1920
+    else:
+        tw, th = 1920, 1080
+    match_bonus = 25.0 if ((w >= h) == (tw >= th)) else 0.0
+    upscale = max(tw / w, th / h)
+    upscale_penalty = min(max(upscale - 1.0, 0.0) * 30.0, 60.0)
+    return match_bonus - upscale_penalty
+
+
 def probe_duration(file_path: Path | str, default: float = 0.0) -> float:
     """Get media file duration in seconds using ffprobe.
 

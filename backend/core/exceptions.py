@@ -182,3 +182,29 @@ class HyperFramesNotInstalledError(MotionGraphicsError):
 
 class MotionRenderError(MotionGraphicsError):
     """A render was attempted and did not produce a usable MP4."""
+
+
+# ── Smart Video Studio ───────────────────────────────────────────────────────
+class StudioError(ViralMintError):
+    """Base for Studio project errors. The message is user-facing."""
+    pass
+
+class StudioDocError(StudioError):
+    """A project document failed validation (hostile, corrupt or out of range)."""
+    pass
+
+class StudioOpError(StudioError):
+    """An edit op was rejected — the message says why (400)."""
+    pass
+
+class StudioConflictError(StudioError):
+    """The project moved on (stale revision, or a render already running) — 409."""
+    pass
+
+class StudioNotFoundError(StudioError):
+    """No such Studio project (for this user) — 404."""
+    pass
+
+class StudioMediaError(StudioError):
+    """A Studio media request can't be served (bad upload, blocked host, no keys) — 400."""
+    pass

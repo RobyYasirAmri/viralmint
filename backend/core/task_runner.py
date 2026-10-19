@@ -1442,6 +1442,9 @@ async def run_upload(
 
 
 _task_semaphore = asyncio.Semaphore(3)  # max 3 concurrent heavy tasks
+# Short network-bound jobs (a Studio plan, a voice take) — they must not queue
+# behind a 30-minute download/analyze chain holding the heavy slots.
+_light_task_semaphore = asyncio.Semaphore(10)
 
 
 # Job ids whose runner coroutine is executing RIGHT NOW in this process.
@@ -1473,8 +1476,8 @@ def _job_id_of(coro) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-async def _run_with_limit(coro):
-    """Run a coroutine with concurrency limiting.
+async def _run_with_limit(coro, semaphore: asyncio.Semaphore | None = None):
+    """Run a coroutine with concurrency limiting (the heavy pool by default).
 
     A job cancelled while it QUEUED for a slot never starts: the cancel API
     answers `best_effort: false` ("cancelled before it started") for a pending
@@ -1483,7 +1486,7 @@ async def _run_with_limit(coro):
     """
     job_id = _job_id_of(coro)
     try:
-        async with _task_semaphore:
+        async with semaphore or _task_semaphore:
             if job_id:
                 from backend.agents.job_helper import job_cancelled
                 if await job_cancelled(job_id):
@@ -1778,6 +1781,18 @@ def dispatch(coro):
     """Fire-and-forget an async task with concurrency limiting (max 3 concurrent)."""
     logger.debug("Dispatching async task: %s", coro.__qualname__ if hasattr(coro, '__qualname__') else type(coro).__name__)
     asyncio.create_task(_run_with_limit(coro))
+
+
+def dispatch_light(coro):
+    """Fire-and-forget an async task on the light pool (max 10 concurrent).
+
+    For short jobs whose wall-clock time is network I/O (a Studio plan, Edge
+    or OpenAI voice takes): routing them through the heavy pool would starve
+    them behind long download/analyze chains. Held by a strong reference
+    (`spawn_background`) so it can't be garbage-collected mid-flight.
+    """
+    logger.debug("Dispatching async task (light): %s", coro.__qualname__ if hasattr(coro, '__qualname__') else type(coro).__name__)
+    spawn_background(_run_with_limit(coro, _light_task_semaphore))
 
 
 # Strong references to long-lived fire-and-forget tasks. asyncio keeps only a
