@@ -1,24 +1,24 @@
 # Web
-fastapi==0.141.1
-uvicorn[standard]==0.52.4
+fastapi==0.151.0
+uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 # websockets is a uvicorn[standard] extra — nothing here imports it directly,
 # so the pin exists only to keep the WS transport reproducible.
-websockets==17.1
+websockets==17.3
 # MCP server mounted at /mcp (backend/mcp/). 3.x for the http_app() API
 # (2.x called it streamable_http_app); it brings the `mcp` client the /mcp
 # page's "Test connection" uses.
 fastmcp==3.4.4
 
 # DB
-sqlalchemy[asyncio]==2.0.52
+sqlalchemy[asyncio]==2.1.5
 aiosqlite==0.22.1
-alembic==1.19.1
+alembic==1.20.0
 
 # Security
 cryptography>=50.0.1,<51
-python-dotenv==1.2.3
-pydantic-settings==2.15.0
+python-dotenv==1.2.4
+pydantic-settings==2.16.0
 
 # AI providers
 # Majors, and the caps are the load-bearing part: both SDKs ship breaking
@@ -40,8 +40,8 @@ anthropic>=1.2.0,<2.0
 openai>=3.6.0,<4.0
 
 # Scout
-google-api-python-client==2.199.0
-google-auth-oauthlib==1.4.1
+google-api-python-client==2.201.0
+google-auth-oauthlib==1.5.0
 pytrends==4.9.2
 
 # Download — yt-dlp + curl-cffi for browser TLS impersonation.
