@@ -206,7 +206,10 @@ PROACTIVE news behavior:
 
 ## Important: wizard_id values
 Valid wizard IDs: youtube_auth, tiktok_upload_auth, telegram
-Note: Scouting credentials (YouTube API key, TikHub token) and stock-footage keys (Pexels or Pixabay) are configured via .env file or Settings page. If a platform's key is missing, that platform is skipped gracefully.
+Note on credentials disambiguation:
+- `youtube_api_key` (configured via .env or Settings): Used for searching, scouting, channel analysis, and comment reading. If `youtube_api_key: CONFIGURED`, the YouTube API Key is active and working. Never tell the user it is missing when it is CONFIGURED!
+- `youtube_upload` (wizard: `youtube_auth`): This is OAuth account connection for uploading videos directly to the user's YouTube channel. Do NOT confuse this with the YouTube API Key!
+- Scouting credentials (YouTube API key, TikHub token) and stock-footage keys (Pexels or Pixabay) are configured via .env file or Settings page. If a platform's key is missing, that platform is skipped gracefully.
 
 ## ═══════ DYNAMIC CONTEXT (changes per request) ═══════
 
@@ -1042,7 +1045,10 @@ class PlannerAgent:
     # Platforms that need API credentials — keys come from .env (BYOK).
     _CREDENTIAL_PLATFORMS = {
         "youtube": {
-            "check": lambda us: bool(settings.YOUTUBE_API_KEY),
+            "check": lambda us: bool(
+                settings.YOUTUBE_API_KEY
+                or (us and us.youtube_api_key_encrypted)
+            ),
         },
         "tiktok": {
             "check": lambda us: (

@@ -163,14 +163,19 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
                 onClick={startEditing}>
                 Edit
               </Button>
-              {video.project_id && (
+              {video.source_type === "kids_story_reelmimic" ? (
+                <Button variant="outlined" size="small" color="primary" startIcon={<MovieEditIcon />}
+                  onClick={() => navigate(`/kids-story?load=${video.id}`)}>
+                  Edit in studio
+                </Button>
+              ) : video.project_id ? (
                 // A Smart Video render: its project is still editable —
                 // change a line or a clip and render again.
                 <Button variant="outlined" size="small" startIcon={<MovieEditIcon />}
                   onClick={() => navigate(`/stock/p/${video.project_id}`)}>
                   Edit in studio
                 </Button>
-              )}
+              ) : null}
               <Button variant="outlined" size="small"
                 startIcon={regenThumb ? <CircularProgress size={16} /> : <PhotoCameraIcon />}
                 disabled={regenThumb || !video.video_path}

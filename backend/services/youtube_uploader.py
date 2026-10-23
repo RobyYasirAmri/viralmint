@@ -101,8 +101,14 @@ async def upload_to_youtube(
         raise UploadError(f"YouTube upload failed: {e}")
 
 
-def build_youtube_auth_url() -> str:
-    """Build the YouTube OAuth authorization URL."""
+import time
+
+# In-memory store for pending OAuth states and their PKCE code_verifiers
+_oauth_states: dict[str, tuple[str, float]] = {}
+
+
+def build_youtube_auth_url() -> tuple[str, str, str]:
+    """Build the YouTube OAuth authorization URL, returning (auth_url, state, code_verifier)."""
     from google_auth_oauthlib.flow import Flow
 
     flow = Flow.from_client_config(
@@ -119,17 +125,28 @@ def build_youtube_auth_url() -> str:
     )
     flow.redirect_uri = settings.YOUTUBE_REDIRECT_URI
 
-    auth_url, _ = flow.authorization_url(
+    auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
-    return auth_url
+    code_verifier = getattr(flow, "code_verifier", "") or ""
+    if state and code_verifier:
+        now = time.time()
+        for k in list(_oauth_states.keys()):
+            if now - _oauth_states[k][1] > 900:
+                _oauth_states.pop(k, None)
+        _oauth_states[state] = (code_verifier, now)
+
+    return auth_url, state, code_verifier
 
 
-async def exchange_youtube_code(code: str) -> dict:
+async def exchange_youtube_code(code: str, state: str = "", code_verifier: str = "") -> dict:
     """Exchange an OAuth authorization code for credentials."""
     from google_auth_oauthlib.flow import Flow
+
+    if not code_verifier and state and state in _oauth_states:
+        code_verifier = _oauth_states.pop(state)[0]
 
     def _exchange():
         flow = Flow.from_client_config(
@@ -143,9 +160,16 @@ async def exchange_youtube_code(code: str) -> dict:
                 }
             },
             scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
+            state=state or None,
         )
         flow.redirect_uri = settings.YOUTUBE_REDIRECT_URI
-        flow.fetch_token(code=code)
+        if code_verifier:
+            flow.code_verifier = code_verifier
+            logger.info("Using PKCE code_verifier for YouTube token exchange")
+        else:
+            logger.warning("No code_verifier available for YouTube token exchange")
+
+        flow.fetch_token(code=code, code_verifier=code_verifier or flow.code_verifier)
 
         creds = flow.credentials
         creds_dict = {
@@ -159,11 +183,35 @@ async def exchange_youtube_code(code: str) -> dict:
         # Get channel info
         from googleapiclient.discovery import build
         youtube = build("youtube", "v3", credentials=creds)
-        channels = youtube.channels().list(part="snippet", mine=True).execute()
+        channels = youtube.channels().list(part="snippet,statistics", mine=True).execute()
         channel_title = ""
+        channel_id = ""
+        thumbnail_url = ""
+        subscriber_count = 0
+        video_count = 0
         if channels.get("items"):
-            channel_title = channels["items"][0]["snippet"]["title"]
+            item = channels["items"][0]
+            channel_id = item.get("id", "")
+            snippet = item.get("snippet", {})
+            channel_title = snippet.get("title", "")
+            thumbnail_url = snippet.get("thumbnails", {}).get("default", {}).get("url", "")
+            stats = item.get("statistics", {})
+            try:
+                subscriber_count = int(stats.get("subscriberCount", 0))
+            except (ValueError, TypeError):
+                subscriber_count = 0
+            try:
+                video_count = int(stats.get("videoCount", 0))
+            except (ValueError, TypeError):
+                video_count = 0
 
-        return {"credentials": creds_dict, "channel_title": channel_title}
+        return {
+            "credentials": creds_dict,
+            "channel_title": channel_title,
+            "channel_id": channel_id,
+            "thumbnail_url": thumbnail_url,
+            "subscriber_count": subscriber_count,
+            "video_count": video_count,
+        }
 
     return await asyncio.to_thread(_exchange)

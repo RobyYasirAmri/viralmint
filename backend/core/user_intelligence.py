@@ -524,8 +524,11 @@ Return a JSON array of 3 strings. No explanation."""
                     or env.OPENROUTER_API_KEY or env.CUSTOM_AI_BASE_URL
                 ),
             },
-            "youtube_scout": {
-                "configured": bool(env.YOUTUBE_API_KEY),
+            "youtube_api_key": {
+                "configured": bool(
+                    env.YOUTUBE_API_KEY
+                    or (user_settings and user_settings.youtube_api_key_encrypted)
+                ),
             },
             "tiktok_scout": {
                 "configured": bool(env.TIKHUB_API_KEY) or (

@@ -489,7 +489,13 @@ class HyperFramesService:
             f"gsap@{GSAP_NPM_VERSION}",
             "--no-audit", "--no-fund", "--loglevel=error",
         ]
-        env = {**os.environ, "npm_config_update_notifier": "false"}
+        node_bin_dir = str(_node_bin().parent)
+        existing_path = os.environ.get("PATH", "")
+        env = {
+            **os.environ,
+            "PATH": f"{node_bin_dir}:{existing_path}" if existing_path else node_bin_dir,
+            "npm_config_update_notifier": "false",
+        }
         try:
             rc, _tail, timed_out = await run_capped(
                 cmd, cwd=str(hf_dir), env=env,
@@ -505,8 +511,9 @@ class HyperFramesService:
             cls._install_error = "npm install timed out. Check your connection and retry."
             return
         if rc != 0:
+            tail_msg = f": {' '.join(_tail)}" if _tail else ""
             cls._install_error = (
-                f"npm install failed (exit {rc}). Often a proxy/antivirus or "
+                f"npm install failed (exit {rc}){tail_msg}. Often a proxy/antivirus or "
                 f"offline network — check the connection and retry."
             )
             return
@@ -625,20 +632,45 @@ class HyperFramesService:
         return _cli_js()
 
     @classmethod
+    def _find_or_create_browser(cls) -> Optional[str]:
+        """Find an existing Chrome/Chromium executable or Playwright's bundled browser.
+        In Docker environments, root requires --no-sandbox to avoid startup failure.
+        """
+        env_val = os.environ.get("HYPERFRAMES_BROWSER_PATH")
+        if env_val and Path(env_val).exists():
+            return env_val
+
+        candidates: list[Path] = []
+        for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+            found = shutil.which(name)
+            if found and Path(found).exists():
+                candidates.append(Path(found))
+
+        for base in [Path("/root/.cache/ms-playwright"), Path.home() / ".cache" / "ms-playwright"]:
+            if base.exists():
+                for p in sorted(base.glob("chromium-*/chrome-linux/chrome"), reverse=True):
+                    if p.exists():
+                        candidates.append(p)
+
+        if not candidates:
+            return None
+
+        real_browser = candidates[0]
+        wrapper = _motion_dir() / "chrome-wrapper.sh"
+        try:
+            wrapper.parent.mkdir(parents=True, exist_ok=True)
+            wrapper.write_text(
+                f'#!/bin/sh\nexec "{real_browser}" --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage "$@"\n'
+            )
+            wrapper.chmod(0o755)
+            return str(wrapper)
+        except OSError:
+            return str(real_browser)
+
+    @classmethod
     def render_env(cls) -> dict:
-        """Subprocess env for a render: pin the FFmpeg binaries to the ones on
-        this machine and keep HyperFrames deterministic and quiet.
-
-        HYPERFRAMES_BROWSER_PATH is deliberately left unset, so HyperFrames
-        resolves (and, on first use, downloads) the exact headless Chrome build
-        its renderer was tested against — the one thing it is genuinely version
-        sensitive about. That download lands in _engine_cache_dir(), NOT under
-        MOTION_DIR; see there for why we report it instead of relocating it.
-
-        Setting HYPERFRAMES_BROWSER_PATH in the environment still wins, because
-        base_env() passes os.environ through. Point it at a Chrome you already
-        have if you would rather not keep a second copy — but note the engine
-        hard-fails on a path that does not exist, rather than falling back.
+        """Subprocess env for a render: pin the FFmpeg binaries and resolve
+        the browser executable so HyperFrames can render reliably in headless/Docker environments.
         """
         env = base_env()
         ffmpeg = shutil.which("ffmpeg")
@@ -647,4 +679,14 @@ class HyperFramesService:
             env["HYPERFRAMES_FFMPEG_PATH"] = ffmpeg
         if ffprobe:
             env["HYPERFRAMES_FFPROBE_PATH"] = ffprobe
+
+        browser = cls._find_or_create_browser()
+        if browser:
+            env["HYPERFRAMES_BROWSER_PATH"] = browser
+
+        node_bin_dir = str(_node_bin().parent)
+        existing_path = env.get("PATH", "")
+        if node_bin_dir not in existing_path:
+            env["PATH"] = f"{node_bin_dir}:{existing_path}" if existing_path else node_bin_dir
+
         return env

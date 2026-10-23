@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     PORT: int = 16888
     SECRET_KEY: str = Field(default="")
     ENCRYPTION_KEY: str = Field(default="")  # Fernet key — auto-generated on first run if empty
+    AUTH_USERNAME: str = Field(default="admin")
+    AUTH_PASSWORD: str = Field(default="")
+    AUTH_JWT_SECRET: str = Field(default="")
 
     # ── Database ──────────────────────────────────────
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DATA_DIR / 'viralmint.db'}"
@@ -180,6 +183,19 @@ def _ensure_secrets(s: Settings) -> Settings:
     env_path = DATA_DIR / ".env"
     lines_to_append = []
 
+    # Read keys previously saved to DATA_DIR / ".env" if available, so that
+    # Docker containers where host .env had empty keys do not churn new keys on every recreate.
+    saved_keys: dict[str, str] = {}
+    if env_path.exists():
+        try:
+            for line in env_path.read_text().splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#") and "=" in stripped:
+                    k, v = stripped.split("=", 1)
+                    saved_keys[k.strip()] = v.strip()
+        except OSError:
+            pass
+
     # Anything that starts with `change-me-` or matches the legacy
     # placeholder is a template literal copied from .env.example, not a key.
     secret_placeholders = {
@@ -187,10 +203,13 @@ def _ensure_secrets(s: Settings) -> Settings:
         "generate-with-python-secrets-token-hex-32",
     }
     if not s.SECRET_KEY or s.SECRET_KEY in secret_placeholders:
-        key = secrets.token_hex(32)
-        s.__dict__["SECRET_KEY"] = key  # override in memory
-        lines_to_append.append(f"SECRET_KEY={key}")
-        logger.warning("SECRET_KEY was not set or held a placeholder — generated and saved to .env")
+        if saved_keys.get("SECRET_KEY") and saved_keys["SECRET_KEY"] not in secret_placeholders:
+            s.__dict__["SECRET_KEY"] = saved_keys["SECRET_KEY"]
+        else:
+            key = secrets.token_hex(32)
+            s.__dict__["SECRET_KEY"] = key  # override in memory
+            lines_to_append.append(f"SECRET_KEY={key}")
+            logger.warning("SECRET_KEY was not set or held a placeholder — generated and saved to .env")
 
     encryption_placeholders = {"generate-with-fernet-generate-key"}
 
@@ -206,10 +225,13 @@ def _ensure_secrets(s: Settings) -> Settings:
         or s.ENCRYPTION_KEY in encryption_placeholders
         or not _is_valid_fernet(s.ENCRYPTION_KEY)
     ):
-        key = Fernet.generate_key().decode()
-        s.__dict__["ENCRYPTION_KEY"] = key
-        lines_to_append.append(f"ENCRYPTION_KEY={key}")
-        logger.warning("ENCRYPTION_KEY was missing/invalid — generated and saved to .env")
+        if saved_keys.get("ENCRYPTION_KEY") and _is_valid_fernet(saved_keys["ENCRYPTION_KEY"]):
+            s.__dict__["ENCRYPTION_KEY"] = saved_keys["ENCRYPTION_KEY"]
+        else:
+            key = Fernet.generate_key().decode()
+            s.__dict__["ENCRYPTION_KEY"] = key
+            lines_to_append.append(f"ENCRYPTION_KEY={key}")
+            logger.warning("ENCRYPTION_KEY was missing/invalid — generated and saved to .env")
 
     if lines_to_append:
         # Persist to .env so keys survive restarts. We have to REWRITE existing

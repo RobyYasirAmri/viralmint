@@ -37,10 +37,8 @@ logger = logging.getLogger(__name__)
 # fails validation in a way that looks like the model's fault.
 AUTHOR_MAX_TOKENS = 8000
 
-# One retry, fed the validator's own findings. A second retry rarely converges:
-# if the model could not satisfy a named, quoted error once, it is usually
-# disagreeing with the contract rather than mistyping it.
-MAX_REPAIR_PASSES = 1
+# Two retries, fed the validator's own findings if issues occur.
+MAX_REPAIR_PASSES = 2
 
 _GRAIN = '<div id="grain" style="position:absolute;inset:0;pointer-events:none;z-index:100;opacity:.10;mix-blend-mode:overlay;background-image:url(\'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%222%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22/></svg>\');background-size:240px 240px;"></div>'
 _VIGNETTE = '<div id="vignette" style="position:absolute;inset:0;pointer-events:none;z-index:90;background:radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.55) 100%);"></div>'
@@ -142,6 +140,12 @@ Emphasis: scale_pulse to({scale:1.1, yoyo:true, repeat:1, ease:"sine.inOut"}) ·
           shake (keyframed x: [-9, 9, 0]) · punch (to({scale:1.05}) and back)
 Exits:    fade_out · slide_out (y/x off + fade) · scale_out to({scale:1.06, opacity:0}) ·
           mask exit (inner yPercent:-115)
+          IMPORTANT FOR EXITS & SCENES: When fading out or exiting a layer / scene, ALWAYS
+          add a visibility hard-kill at the exact end of the exit tween:
+          `tl.set("<selector>", { visibility: "hidden" }, <exit-end-time>);`
+          For timed clip scenes (<div class="clip"> or #scene...), NEVER tween opacity/transform
+          directly on the clip container — wrap scene content in an inner <div> and animate that
+          inner wrapper, then hard-kill it with `tl.set(...)`.
 Accents:  underline_sweep fromTo({scaleX:0},{scaleX:1}, transformOrigin:"left center") ·
           shimmer (a gradient band swept via xPercent) · color_shift to({color:"<accent>"})
 Mood → ease: smooth=sine/power1 · snappy=power4.out · bouncy=back.out ·

@@ -3,7 +3,7 @@
 """REST /api/settings — user settings CRUD + credential testing + OAuth callbacks."""
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -203,18 +203,26 @@ async def youtube_auth():
     if not app_settings.YOUTUBE_CLIENT_ID or not app_settings.YOUTUBE_CLIENT_SECRET:
         return {"error": "YouTube OAuth client ID/secret not configured in .env"}
     from backend.services.youtube_uploader import build_youtube_auth_url
-    url = build_youtube_auth_url()
-    return RedirectResponse(url)
+    url, state, verifier = build_youtube_auth_url()
+    resp = RedirectResponse(url)
+    if verifier:
+        resp.set_cookie("yt_verifier", verifier, max_age=900, httponly=True, samesite="lax")
+    return resp
 
 
 @router.get("/settings/youtube-callback")
-async def youtube_callback(code: str = Query(...), state: str = Query(None)):
+async def youtube_callback(request: Request, code: str = Query(...), state: str = Query(None)):
     """Handle YouTube OAuth callback — exchange code for credentials."""
     from backend.services.youtube_uploader import exchange_youtube_code
     try:
-        result = await exchange_youtube_code(code)
+        verifier = request.cookies.get("yt_verifier", "")
+        result = await exchange_youtube_code(code, state=state or "", code_verifier=verifier)
         creds_json = result["credentials"]
         channel_title = result.get("channel_title", "")
+        channel_id = result.get("channel_id", "")
+        thumbnail_url = result.get("thumbnail_url", "")
+        subscriber_count = result.get("subscriber_count", 0)
+        video_count = result.get("video_count", 0)
 
         async with AsyncSessionLocal() as db:
             res = await db.execute(
@@ -227,12 +235,48 @@ async def youtube_callback(code: str = Query(...), state: str = Query(None)):
             import json
             s.youtube_credentials_json_encrypted = encrypt(json.dumps(creds_json))
             s.youtube_channel_title = channel_title
+
+            # Sync authenticated channel into connected_channels table so it appears in My Channels
+            if channel_id or channel_title:
+                from backend.models.connected_channel import ConnectedChannel
+                q_ch = select(ConnectedChannel).where(
+                    ConnectedChannel.user_id == "local",
+                    ConnectedChannel.platform == "youtube",
+                )
+                if channel_id:
+                    q_ch = q_ch.where(ConnectedChannel.channel_id == channel_id)
+                res_ch = await db.execute(q_ch)
+                ch_obj = res_ch.scalars().first()
+                ch_url = f"https://www.youtube.com/channel/{channel_id}" if channel_id else "https://www.youtube.com"
+                if not ch_obj:
+                    ch_obj = ConnectedChannel(
+                        user_id="local",
+                        platform="youtube",
+                        channel_id=channel_id or None,
+                        channel_url=ch_url,
+                        channel_name=channel_title,
+                        thumbnail_url=thumbnail_url,
+                        subscriber_count=subscriber_count,
+                        video_count=video_count,
+                    )
+                    db.add(ch_obj)
+                else:
+                    ch_obj.channel_name = channel_title
+                    if thumbnail_url:
+                        ch_obj.thumbnail_url = thumbnail_url
+                    if subscriber_count:
+                        ch_obj.subscriber_count = subscriber_count
+                    if video_count:
+                        ch_obj.video_count = video_count
+
             await db.commit()
 
-        return RedirectResponse(f"/?youtube_connected=true&channel={channel_title}")
+        resp = RedirectResponse(f"/settings?youtube_connected=true&channel={channel_title}")
+        resp.delete_cookie("yt_verifier")
+        return resp
     except Exception as e:
         logger.error(f"YouTube OAuth callback failed: {e}")
-        return RedirectResponse(f"/?youtube_error={str(e)[:200]}")
+        return RedirectResponse(f"/settings?youtube_error={str(e)[:200]}")
 
 
 @router.get("/settings/tiktok-upload-auth")

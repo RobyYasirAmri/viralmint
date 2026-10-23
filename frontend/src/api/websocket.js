@@ -1,5 +1,10 @@
 const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:"
-const WS_URL = `${WS_PROTOCOL}//${window.location.host}/ws/chat`
+
+function getWsUrl() {
+  const token = localStorage.getItem("vm_token")
+  const base = `${WS_PROTOCOL}//${window.location.host}/ws/chat`
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
+}
 
 class ViralMintWS {
   constructor() {
@@ -30,7 +35,7 @@ class ViralMintWS {
     // Capture the socket in a local: every handler below compares it against
     // `this.ws` so a SUPERSEDED socket goes silent instead of racing the
     // current one.
-    const socket = new WebSocket(WS_URL)
+    const socket = new WebSocket(getWsUrl())
     this.ws = socket
 
     socket.onmessage = (e) => {

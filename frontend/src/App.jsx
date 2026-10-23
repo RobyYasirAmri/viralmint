@@ -1,13 +1,15 @@
-import { lazy, Suspense } from "react"
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom"
+import { lazy, Suspense, useState, useEffect } from "react"
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom"
 import { Snackbar, Alert, Button, CircularProgress, Box } from "@mui/material"
 import ErrorBoundary from "./components/ErrorBoundary"
 import Layout from "./components/Layout"
 import useAppStore from "./store/appStore"
 import { pluginRoutes } from "./plugins"
+import http from "./api/http"
 
 // Route-level code splitting — only Chat is eagerly loaded (home page)
 import Chat from "./pages/Chat"
+const Login = lazy(() => import("./pages/Login"))
 const Settings = lazy(() => import("./pages/Settings"))
 const Library = lazy(() => import("./pages/Library"))
 const Scout = lazy(() => import("./pages/Scout"))
@@ -16,6 +18,7 @@ const SmartVideoStudio = lazy(() => import("./pages/SmartVideoStudio"))
 const Channels = lazy(() => import("./pages/Channels"))
 const ClipStudio = lazy(() => import("./pages/ClipStudio"))
 const MotionGraphics = lazy(() => import("./pages/MotionGraphics"))
+const KidsStoryStudio = lazy(() => import("./pages/KidsStoryStudio"))
 const Tools = lazy(() => import("./pages/Tools"))
 const Mcp = lazy(() => import("./pages/Mcp"))
 
@@ -90,13 +93,60 @@ function GlobalSnackbar() {
   )
 }
 
+function RequireAuth({ children }) {
+  const [checking, setChecking] = useState(true)
+  const [auth, setAuth] = useState(false)
+  const location = useLocation()
+
+  useEffect(() => {
+    let active = true
+    http
+      .get("/api/auth/me")
+      .then(({ data }) => {
+        if (!active) return
+        if (!data.auth_enabled || data.authenticated) {
+          setAuth(true)
+        } else {
+          setAuth(false)
+        }
+      })
+      .catch(() => {
+        if (active) setAuth(false)
+      })
+      .finally(() => {
+        if (active) setChecking(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [location.pathname])
+
+  if (checking) {
+    return <LazyFallback />
+  }
+
+  if (!auth) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  return children
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <ErrorBoundary>
         <Suspense fallback={<LazyFallback />}>
           <Routes>
-            <Route path="/" element={<Layout />}>
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/"
+              element={
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              }
+            >
               <Route index element={<Chat />} />
               <Route path="dashboard" element={<Navigate to="/videos" />} />
               {/* `/videos` is the Library. The path is legacy and stays: it is
@@ -114,6 +164,7 @@ export default function App() {
               <Route path="cron" element={<Navigate to="/" />} />
               <Route path="clips" element={<ClipStudio />} />
               <Route path="motion" element={<MotionGraphics />} />
+              <Route path="kids-story" element={<KidsStoryStudio />} />
               <Route path="tools" element={<Tools />} />
               <Route path="mcp" element={<Mcp />} />
               <Route path="tools/captions" element={<ToolCaptions />} />

@@ -5,6 +5,7 @@ REST API for reading YouTube/TikTok channel data.
 Supports multiple connected channels per user.
 Connect by URL — no OAuth needed. Uses YouTube Data API key + yt-dlp.
 """
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query, HTTPException
@@ -40,7 +41,55 @@ async def list_channels(platform: str = Query(None), user_id: str = "local"):
             q = q.where(ConnectedChannel.platform == platform)
         q = q.order_by(ConnectedChannel.created_at.desc())
         result = await db.execute(q)
-        channels = result.scalars().all()
+        channels = list(result.scalars().all())
+
+        # Auto-sync YouTube OAuth channel if not present in connected_channels
+        if (platform is None or platform == "youtube") and not any(ch.platform == "youtube" for ch in channels):
+            res_user = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            user_s = res_user.scalar_one_or_none()
+            if user_s and user_s.youtube_credentials_json_encrypted and user_s.youtube_channel_title:
+                try:
+                    import json
+                    from backend.core.crypto import decrypt
+                    from google.oauth2.credentials import Credentials
+                    from googleapiclient.discovery import build
+
+                    creds_data = json.loads(decrypt(user_s.youtube_credentials_json_encrypted))
+                    creds = Credentials(
+                        token=creds_data.get("token"),
+                        refresh_token=creds_data.get("refresh_token"),
+                        token_uri=creds_data.get("token_uri"),
+                        client_id=creds_data.get("client_id"),
+                        client_secret=creds_data.get("client_secret"),
+                    )
+                    yt = build("youtube", "v3", credentials=creds)
+                    ch_resp = await asyncio.to_thread(lambda: yt.channels().list(part="snippet,statistics", mine=True).execute())
+                    if ch_resp.get("items"):
+                        item = ch_resp["items"][0]
+                        cid = item.get("id", "")
+                        snippet = item.get("snippet", {})
+                        cname = snippet.get("title", user_s.youtube_channel_title)
+                        thumb = snippet.get("thumbnails", {}).get("default", {}).get("url", "")
+                        stats = item.get("statistics", {})
+                        sub_count = int(stats.get("subscriberCount", 0)) if stats.get("subscriberCount") else 0
+                        vid_count = int(stats.get("videoCount", 0)) if stats.get("videoCount") else 0
+
+                        new_ch = ConnectedChannel(
+                            user_id=user_id,
+                            platform="youtube",
+                            channel_id=cid,
+                            channel_url=f"https://www.youtube.com/channel/{cid}" if cid else "https://www.youtube.com",
+                            channel_name=cname,
+                            thumbnail_url=thumb,
+                            subscriber_count=sub_count,
+                            video_count=vid_count,
+                        )
+                        db.add(new_ch)
+                        await db.commit()
+                        await db.refresh(new_ch)
+                        channels = [new_ch] + list(channels)
+                except Exception as ex:
+                    logger.warning(f"Could not auto-sync YouTube OAuth channel to connected_channels: {ex}")
 
     return {
         "channels": [

@@ -14,10 +14,30 @@ from backend.core.logging_config import setup_logging
 from backend.core import plugins
 from backend.database import init_db
 
-from backend.api import captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, library, mcp_settings, media, messaging as messaging_router, music, news, scout, settings as settings_router, studio, templates, tools, tts_preview, videos
+from backend.api import auth as auth_router, captions, channels, chat, chat_sessions, config as config_router, downloaded, generate, jobs, kids_story, library, mcp_settings, media, messaging as messaging_router, music, news, scout, settings as settings_router, studio, templates, tools, tts_preview, videos
 
 # Initialize logging before anything else
 setup_logging(debug=settings.DEBUG)
+
+# PyAV >= 14 compatibility patch for faster-whisper (removes unexpected keyword argument 'metadata_errors')
+try:
+    import av
+    _orig_av_open = av.open
+
+    def _safe_av_open(*args, **kwargs):
+        if "metadata_errors" in kwargs:
+            try:
+                return _orig_av_open(*args, **kwargs)
+            except TypeError as err:
+                if "metadata_errors" in str(err):
+                    kwargs.pop("metadata_errors", None)
+                    return _orig_av_open(*args, **kwargs)
+                raise
+        return _orig_av_open(*args, **kwargs)
+
+    av.open = _safe_av_open
+except Exception:
+    pass
 
 # The MCP server's ASGI app, built in create_app() and read by the lifespan so
 # its session manager starts with ours. None when fastmcp is unavailable or the
@@ -363,7 +383,37 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
+    @app.middleware("http")
+    async def auth_enforcement_middleware(request: Request, call_next):
+        path = request.url.path
+        # Enforce auth on /api/ endpoints (except public/exempt routes)
+        if path.startswith("/api/"):
+            exempt_prefixes = (
+                "/api/auth/",
+                "/api/docs",
+                "/api/openapi.json",
+                "/api/settings/youtube-auth",
+                "/api/settings/youtube-callback",
+                "/api/settings/tiktok-upload-auth",
+                "/api/settings/tiktok-upload-callback",
+                "/api/generate/motion/sample",
+            )
+            # Allow Docker internal healthcheck (localhost -> /api/settings)
+            client_ip = request.client.host if request.client else ""
+            if client_ip in ("127.0.0.1", "::1", "localhost") and path == "/api/settings":
+                return await call_next(request)
+
+            if not any(path.startswith(p) for p in exempt_prefixes):
+                from backend.core.auth import is_auth_enabled, get_token_from_request, verify_access_token
+                if is_auth_enabled():
+                    token = get_token_from_request(request)
+                    if not token or not verify_access_token(token):
+                        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+
+        return await call_next(request)
+
     # Register API routers
+    app.include_router(auth_router.router, prefix="/api")
     app.include_router(chat.router)
     app.include_router(jobs.router, prefix="/api")
     app.include_router(scout.router, prefix="/api")
@@ -385,6 +435,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_settings.router, prefix="/api")
     app.include_router(music.router, prefix="/api")
     app.include_router(studio.router, prefix="/api")
+    app.include_router(kids_story.router, prefix="/api")
 
     # Load proprietary overlay (no-op if not installed) and register plugin routers.
     # See docs/OVERLAY.md for the contract.

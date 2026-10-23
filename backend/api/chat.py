@@ -140,6 +140,15 @@ async def chat_websocket(websocket: WebSocket):
         logger.warning("Rejected /ws/chat handshake from foreign origin %r", origin[:120])
         await websocket.close(code=1008)
         return
+
+    from backend.core.auth import is_auth_enabled, verify_access_token
+    if is_auth_enabled():
+        token = websocket.cookies.get("vm_token") or websocket.query_params.get("token")
+        if not token or not verify_access_token(token):
+            logger.warning("Rejected /ws/chat: unauthenticated websocket connection")
+            await websocket.close(code=1008)
+            return
+
     await ws_manager.connect(websocket, user_id)
 
     # Load user settings

@@ -749,12 +749,16 @@ def _iso_from_mtime(mtime: float) -> str:
     return datetime.fromtimestamp(mtime, tz=timezone.utc).replace(tzinfo=None).isoformat()
 
 
-async def gather(db: AsyncSession) -> list[dict]:
-    """Every library item, unfiltered and unsorted."""
+async def gather(db: AsyncSession, include_tracks: bool = False) -> list[dict]:
+    """Every library item, unfiltered and unsorted.
+
+    Background music tracks (storage/music/) are excluded from the main Library by
+    default to keep the workspace clean, and are accessed via the dedicated Music/Background music selector.
+    """
     generated = await _generated_items(db)
     downloaded = await _downloaded_items(db)
     jobs, music_copies = await _job_items(db)
-    tracks = _track_items(music_copies)
+    tracks = _track_items(music_copies) if include_tracks else []
     items = [*generated, *downloaded, *jobs, *tracks]
     _link_parents(items)
     _fill_titles(items)
@@ -876,7 +880,8 @@ async def lineage(db: AsyncSession, key: str) -> dict[str, Any] | None:
     deliberately doesn't load the whole tree, so this answers for a single key
     instead of making the page hold a lineage map it mostly won't use.
     """
-    all_items = await gather(db)
+    is_track = key.startswith(f"{KEY_TRACK}:")
+    all_items = await gather(db, include_tracks=is_track)
     by_key = {it["key"]: it for it in all_items}
     item = by_key.get(key)
     if item is None:

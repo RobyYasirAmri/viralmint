@@ -24,6 +24,8 @@ import BuildIcon from "@mui/icons-material/BuildOutlined"
 import SettingsIcon from "@mui/icons-material/SettingsOutlined"
 import TravelExploreIcon from "@mui/icons-material/TravelExploreOutlined"
 import HubIcon from "@mui/icons-material/HubOutlined"
+import AutoStoriesIcon from "@mui/icons-material/AutoStoriesOutlined"
+import LogoutIcon from "@mui/icons-material/LogoutOutlined"
 
 const DRAWER_WIDTH = 240
 const COLLAPSED_WIDTH = 64
@@ -36,6 +38,7 @@ const navItems = [
   { to: "/videos",    icon: <VideoLibraryIcon />,     label: "Library" },
   { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Smart Video" },
   { to: "/motion",    icon: <MovieFilterIcon />,      label: "Motion Graphics" },
+  { to: "/kids-story", icon: <AutoStoriesIcon />,     label: "Kids Story" },
   { to: "/tools",     icon: <BuildIcon />,            label: "Tools" },
   // Messaging lives in Settings → Messaging (/messaging redirects there).
   { to: "/mcp",       icon: <HubIcon />,              label: "MCP" },
@@ -89,6 +92,19 @@ export default function Layout() {
   }, [wsJobCount])  // eslint-disable-line react-hooks/exhaustive-deps
   // Opening the panel is a question — answer it with fresh data.
   useEffect(() => { if (activityOpen) fetchJobs() }, [activityOpen])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle OAuth callback URL status params (?youtube_connected=true, ?youtube_error=...)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get("youtube_connected") === "true") {
+      const ch = params.get("channel")
+      showSnackbar(ch ? `YouTube channel connected: ${ch}` : "YouTube connected successfully!", "success")
+      navigate(location.pathname, { replace: true })
+    } else if (params.get("youtube_error")) {
+      showSnackbar(`YouTube OAuth failed: ${params.get("youtube_error")}`, "error")
+      navigate(location.pathname, { replace: true })
+    }
+  }, [location.search])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const drawerWidth = collapsed && !isNarrow ? COLLAPSED_WIDTH : DRAWER_WIDTH
 
@@ -239,6 +255,34 @@ export default function Layout() {
 
       <List sx={{ px: collapsed && !isNarrow ? 0.75 : 1.5, pb: 1 }}>
         {bottomItems.map(renderNavItem)}
+        <Tooltip title={collapsed && !isNarrow ? "Sign Out" : ""} placement="right" arrow>
+          <ListItemButton
+            onClick={async () => {
+              try {
+                await http.post("/api/auth/logout")
+              } catch {}
+              localStorage.removeItem("vm_token")
+              localStorage.removeItem("vm_username")
+              window.location.href = "/login"
+            }}
+            sx={{
+              borderRadius: 2.5,
+              mb: 0.5,
+              py: 0.85,
+              px: collapsed && !isNarrow ? 0 : 1.5,
+              justifyContent: collapsed && !isNarrow ? "center" : "flex-start",
+              color: "text.secondary",
+              "&:hover": { color: "error.main", bgcolor: "rgba(239, 68, 68, 0.08)" },
+            }}
+          >
+            <ListItemIcon sx={{ minWidth: collapsed && !isNarrow ? "auto" : 40, color: "inherit", justifyContent: "center" }}>
+              <LogoutIcon sx={{ fontSize: 20 }} />
+            </ListItemIcon>
+            {!(collapsed && !isNarrow) && (
+              <ListItemText primary="Sign Out" primaryTypographyProps={{ fontSize: "0.88rem", fontWeight: 500 }} />
+            )}
+          </ListItemButton>
+        </Tooltip>
         {/* Expand button at the bottom when collapsed */}
         {!isNarrow && collapsed && (
           <Tooltip title="Expand sidebar" placement="right" arrow>

@@ -108,6 +108,7 @@ export const PRODUCERS = {
   // generated_videos.source_type — the studios.
   smart_video: { label: "Smart Video", media: "video", origin: "created" },
   motion_graphics: { label: "Motion Graphics", media: "video", origin: "created" },
+  kids_story_reelmimic: { label: "Kids Story", media: "video", origin: "created" },
   // A clip is cut FROM a source you own — derived, not created. Filing it under
   // "Generated" is why a clip and the video it came from could never be seen
   // together.

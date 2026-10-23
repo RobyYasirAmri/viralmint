@@ -228,6 +228,70 @@ export default function ServiceKeysSection({ settings, updateSettings }) {
           updateSettings={updateSettings}
         />
       ))}
+
+      {/* YouTube Upload OAuth Connect */}
+      <Box
+        sx={{
+          p: 2,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 2,
+          mt: 2,
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
+          <YouTubeIcon sx={{ color: "#FF0000", fontSize: 28 }} />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                YouTube Channel (Upload)
+              </Typography>
+              {settings?.youtube_connected ? (
+                <Chip
+                  size="small"
+                  icon={<CheckCircleIcon sx={{ fontSize: "16px !important" }} />}
+                  label={`Connected: ${settings?.youtube_channel_title || "Channel"}`}
+                  color="success"
+                  variant="outlined"
+                  sx={{ height: 22, fontSize: "0.75rem" }}
+                />
+              ) : (
+                <Chip
+                  size="small"
+                  label="Not connected"
+                  variant="outlined"
+                  sx={{ height: 22, fontSize: "0.75rem", color: "text.secondary" }}
+                />
+              )}
+            </Stack>
+            <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 0.25 }}>
+              Connect your YouTube channel via Google OAuth to upload videos and Shorts directly from ViralMint
+            </Typography>
+          </Box>
+        </Stack>
+
+        <Stack direction="row" spacing={1.5}>
+          {settings?.youtube_connected ? (
+            <Button
+              variant="outlined"
+              size="small"
+              color="error"
+              href="/api/settings/youtube-auth"
+            >
+              Reconnect Channel
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              size="small"
+              sx={{ bgcolor: "#FF0000", "&:hover": { bgcolor: "#CC0000" } }}
+              href="/api/settings/youtube-auth"
+            >
+              Connect YouTube Channel
+            </Button>
+          )}
+        </Stack>
+      </Box>
     </Stack>
   )
 }

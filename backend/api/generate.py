@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -504,3 +504,77 @@ def _staged_assets() -> list:
             entry["duration"] = round(probe_duration(f, 0.0), 1) or None
         out.append(entry)
     return out[:6]
+
+
+@router.api_route("/motion/sample", methods=["GET", "POST"])
+async def create_motion_sample(request: Request):
+    """Render a premium Smart Home Living sample video into Library."""
+    title = "Smart Home Living - Autonomous Future"
+    kicker = "SMART LIVING · 2026"
+    headline = "Your Home Should Think For You"
+    subtitle = "Adaptive climate, bio-lighting, and total control."
+    accent = "#00d2ff"
+    duration = 10
+
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                title = body.get("title", title)
+                kicker = body.get("kicker", kicker)
+                headline = body.get("headline", headline)
+                subtitle = body.get("subtitle", subtitle)
+                accent = body.get("accent", accent)
+                duration = int(body.get("duration", duration))
+        except Exception:
+            pass
+
+    import asyncio
+    from uuid import uuid4
+    from backend.config import settings
+    from backend.services.motion_render_service import MotionRenderService
+    from backend.agents.generator_motion import MotionGeneratorAgent
+    from backend.services.video_utils import probe_duration
+    from fastapi.responses import RedirectResponse
+
+    variables = {
+        "kicker": kicker,
+        "title": headline,
+        "subtitle": subtitle,
+        "accent": accent,
+        "bg": "#090d16",
+        "_vm_duration": duration,
+    }
+
+    out_file = settings.GENERATED_DIR / f"motion_{uuid4().hex[:12]}.mp4"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    rendered_path = await MotionRenderService.render(
+        template_id="kinetic_hook",
+        variables=variables,
+        aspect="9:16",
+        fps=30,
+        quality="standard",
+        out_path=out_file,
+        skip_gate=True,
+        supersample=False,
+    )
+
+    dur = await asyncio.to_thread(probe_duration, rendered_path, 0.0)
+    thumb = await MotionGeneratorAgent._thumbnail(rendered_path)
+
+    gen_id = await MotionGeneratorAgent._save(
+        user_id="local",
+        title=title,
+        variables=variables,
+        niche="smart_home",
+        video_path=rendered_path,
+        thumb_path=thumb,
+        audio_path=None,
+        aspect_ratio="9:16",
+        duration_seconds=int(round(dur)) if dur else duration,
+        script=f"{kicker}: {headline}. {subtitle}",
+        caption_status=None,
+    )
+
+    return RedirectResponse(f"/videos?open={gen_id}", status_code=303)

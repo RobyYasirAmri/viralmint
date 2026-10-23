@@ -135,7 +135,7 @@ def base_env() -> dict:
     checks off, deterministic on-disk caches under motion/, and the loopback
     studio pin. render_env() (hyperframes_service) extends this with the FFmpeg
     binary pins; the studio uses it as-is (preview needs no binaries)."""
-    return {
+    env = {
         **os.environ,
         "HYPERFRAMES_NO_TELEMETRY": "1",
         "HYPERFRAMES_NO_UPDATE_CHECK": "1",
@@ -143,6 +143,15 @@ def base_env() -> dict:
         "HYPERFRAMES_FONT_CACHE_DIR": str(settings.MOTION_DIR / "fonts"),
         "HYPERFRAMES_EXTRACT_CACHE_DIR": str(settings.MOTION_DIR / "cache"),
     }
+    if not env.get("HYPERFRAMES_BROWSER_PATH"):
+        try:
+            from backend.services.hyperframes_service import HyperFramesService
+            browser = HyperFramesService._find_or_create_browser()
+            if browser:
+                env["HYPERFRAMES_BROWSER_PATH"] = browser
+        except Exception:
+            pass
+    return env
 
 
 def render_argv(node_bin: Path, cli_js: Path, project_dir: Path, output: Path,

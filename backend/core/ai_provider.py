@@ -289,9 +289,9 @@ def get_ai_client(user_settings=None, **_kwargs) -> AIClient:
     if user_provider == AIProvider.OPENAI_COMPATIBLE:
         return AIClient(
             provider=user_provider,
-            api_key=user_key or "",
-            model=user_model,
-            base_url=getattr(user_settings, "ai_base_url", None),
+            api_key=user_key or settings.CUSTOM_AI_API_KEY or "",
+            model=user_model or settings.CUSTOM_AI_MODEL or None,
+            base_url=getattr(user_settings, "ai_base_url", None) or normalize_base_url(settings.CUSTOM_AI_BASE_URL),
         )
     if user_provider and user_key:
         return AIClient(provider=user_provider, api_key=user_key, model=user_model)

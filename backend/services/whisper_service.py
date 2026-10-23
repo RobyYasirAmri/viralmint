@@ -12,6 +12,27 @@ from backend.core.executors import transcribe_pool
 
 logger = logging.getLogger(__name__)
 
+# PyAV >= 14 compatibility patch for faster-whisper.
+# faster-whisper passes `metadata_errors="ignore"` to `av.open()`, which was removed in PyAV 14+.
+try:
+    import av
+    _orig_av_open = av.open
+
+    def _safe_av_open(*args, **kwargs):
+        if "metadata_errors" in kwargs:
+            try:
+                return _orig_av_open(*args, **kwargs)
+            except TypeError as err:
+                if "metadata_errors" in str(err):
+                    kwargs.pop("metadata_errors", None)
+                    return _orig_av_open(*args, **kwargs)
+                raise
+        return _orig_av_open(*args, **kwargs)
+
+    av.open = _safe_av_open
+except Exception as _patch_err:
+    logger.debug("av.open patch skipped: %s", _patch_err)
+
 WHISPER_QUALITY_MAP = {
     "fast":     "base",
     "balanced": "small",

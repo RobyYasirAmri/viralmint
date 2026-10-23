@@ -107,6 +107,7 @@ PRODUCERS: dict[str, Producer] = {
     # the one-shot Smart Video pipeline predates the column.
     "smart_video": _p("smart_video", "Smart Video", MEDIA_VIDEO, ORIGIN_CREATED),
     "motion_graphics": _p("motion_graphics", "Motion Graphics", MEDIA_VIDEO, ORIGIN_CREATED),
+    "kids_story_reelmimic": _p("kids_story_reelmimic", "Kids Story", MEDIA_VIDEO, ORIGIN_CREATED),
     "tool:voiceover": _p("tool:voiceover", "Voice-over", MEDIA_AUDIO, ORIGIN_CREATED),
 
     # Made FROM something you already had. A clip is the clearest case: it is
